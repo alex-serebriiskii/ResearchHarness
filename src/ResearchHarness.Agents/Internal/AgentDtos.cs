@@ -40,3 +40,9 @@ internal record ExtractedSourceDto(
 internal record JournalAssemblyOutput(string? OverallSummary, string? CrossTopicAnalysis);
 
 internal record PaperSynthesisOutput(string? ExecutiveSummary, double ConfidenceScore);
+
+internal record ReviewEvaluationOutput(
+    string? Verdict,
+    string? Feedback,
+    List<string>? Issues
+);

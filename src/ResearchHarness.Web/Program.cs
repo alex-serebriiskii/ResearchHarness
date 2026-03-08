@@ -1,3 +1,4 @@
+using OpenTelemetry.Trace;
 using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using ResearchHarness.Agents;
@@ -27,7 +28,7 @@ builder.Services.AddSingleton(jobConfig);
 // ── HTTP Clients ───────────────────────────────────────────────────────────
 
 builder.Services.AddHttpClient("Anthropic");
-builder.Services.AddHttpClient("OpenRouter", c => c.Timeout = TimeSpan.FromSeconds(300));
+builder.Services.AddHttpClient("OpenRouter"); // timeout is now per-request adaptive (2E.1)
 builder.Services.AddHttpClient("BraveSearch");
 builder.Services.AddHttpClient("BravePageFetcher");
 
@@ -59,13 +60,38 @@ else
 // ── Infrastructure: Search ─────────────────────────────────────────────────
 
 builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<SearchResultCache>();
+
+// ── Observability ──────────────────────────────────────────────────────────
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddSource("ResearchHarness.Orchestration")
+        .AddConsoleExporter());
+// Register ISearchResultCache: use Redis-backed implementation when configured, in-memory otherwise
+var redisConnection = builder.Configuration["Redis:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(redisConnection))
+{
+    builder.Services.AddStackExchangeRedisCache(o => o.Configuration = redisConnection);
+    builder.Services.AddSingleton<ISearchResultCache, DistributedSearchResultCache>();
+}
+else
+{
+    builder.Services.AddSingleton<SearchResultCache>();
+    builder.Services.AddSingleton<ISearchResultCache>(sp => sp.GetRequiredService<SearchResultCache>());
+}
 builder.Services.AddSingleton<ISearchProvider, BraveSearchProvider>();
 builder.Services.AddSingleton<IPageFetcher, BravePageFetcher>();
 
 // ── Infrastructure: Persistence ───────────────────────────────────────────
 
-builder.Services.AddSingleton<IJobStore, InMemoryJobStore>();
+// SQLite persistence: default to %LOCALAPPDATA%\ResearchHarness\jobs.db so the file
+// never lands in the repo tree. Override via ConnectionStrings:Jobs in any environment.
+var defaultDbPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "ResearchHarness", "jobs.db");
+var jobsConnectionString = builder.Configuration.GetConnectionString("Jobs")
+    ?? $"Data Source={defaultDbPath}";
+Directory.CreateDirectory(Path.GetDirectoryName(defaultDbPath)!);
+builder.Services.AddSingleton<IJobStore>(new SqliteJobStore(jobsConnectionString));
 
 // ── Agents ─────────────────────────────────────────────────────────────────
 // LabAgentService implements both ILabAgentService and ILabAgentServiceInternal.
@@ -77,6 +103,8 @@ builder.Services.AddTransient<ILabAgentService>(
 
 builder.Services.AddTransient<IInstituteLeadAgent, InstituteLeadAgent>();
 builder.Services.AddTransient<IPrincipalInvestigatorAgent, PrincipalInvestigatorAgent>();
+builder.Services.AddTransient<IPeerReviewService, PeerReviewService>();
+builder.Services.AddTransient<IConsultingFirmService, ConsultingFirmService>();
 
 // ── Orchestration ──────────────────────────────────────────────────────────
 

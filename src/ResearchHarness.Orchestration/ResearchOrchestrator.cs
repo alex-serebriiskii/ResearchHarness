@@ -1,4 +1,6 @@
 using System.Threading.Channels;
+using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Core;
 using ResearchHarness.Core.Interfaces;
@@ -7,29 +9,41 @@ using ResearchHarness.Core.Models;
 namespace ResearchHarness.Orchestration;
 
 /// <summary>
-/// Implements the Phase 1 linear pipeline:
-/// Decompose → Research (1 topic) → Assemble journal.
-/// Peer review and consulting are skipped in Phase 1.
+/// Implements the Phase 2 pipeline:
+///   1. Optional consulting firm domain briefing
+///   2. Decompose theme into topics
+///   3. Research topics in parallel (one PI per topic)
+///   4. Peer review + revision loop per paper
+///   5. Assemble journal from accepted papers
 /// </summary>
 public class ResearchOrchestrator : IResearchOrchestrator
 {
     private readonly IInstituteLeadAgent _lead;
-    private readonly IPrincipalInvestigatorAgent _pi;
+    private readonly IPeerReviewService _peerReviewService;
+    private readonly IConsultingFirmService _consultingFirmService;
+    private readonly IServiceProvider _serviceProvider;
     private readonly IJobStore _jobStore;
     private readonly ChannelWriter<Guid> _queue;
     private readonly JobConfiguration _config;
     private readonly ILogger<ResearchOrchestrator> _logger;
 
+    private static readonly ActivitySource ActivitySource =
+        new("ResearchHarness.Orchestration", "1.0.0");
+
     public ResearchOrchestrator(
         IInstituteLeadAgent lead,
-        IPrincipalInvestigatorAgent pi,
+        IPeerReviewService peerReviewService,
+        IConsultingFirmService consultingFirmService,
+        IServiceProvider serviceProvider,
         IJobStore jobStore,
         ChannelWriter<Guid> queue,
         JobConfiguration config,
         ILogger<ResearchOrchestrator> logger)
     {
         _lead = lead;
-        _pi = pi;
+        _peerReviewService = peerReviewService;
+        _consultingFirmService = consultingFirmService;
+        _serviceProvider = serviceProvider;
         _jobStore = jobStore;
         _queue = queue;
         _config = config;
@@ -74,13 +88,32 @@ public class ResearchOrchestrator : IResearchOrchestrator
             "Starting research pipeline for job {JobId}: \"{Theme}\"",
             jobId, job.Theme);
 
+        using var activity = ActivitySource.StartActivity(
+            "RunJob",
+            ActivityKind.Internal,
+            parentContext: default);
+        activity?.SetTag("job.id", jobId.ToString());
+        activity?.SetTag("job.theme", job.Theme);
+
+        using (_logger.BeginScope(new Dictionary<string, object> { ["JobId"] = jobId }))
         try
         {
-            // Step 1: Decompose theme into topics
+            // Step 1: Optional consulting firm domain briefing
+            string? domainContext = null;
+            if (job.Config.EnableConsultingFirm)
+            {
+                _logger.LogInformation("Job {JobId}: requesting domain briefing", jobId);
+                domainContext = await _consultingFirmService.GetDomainBriefingAsync(
+                    job.Theme, "general research uncertainty", ct);
+                job = job with { DomainContext = domainContext };
+                await _jobStore.SaveAsync(job, ct);
+            }
+
+            activity?.AddEvent(new ActivityEvent("ConsultingBriefingComplete"));
+
+            // Step 2: Decompose theme into topics
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Decomposing, ct);
-
-            var topics = await _lead.DecomposeThemeAsync(job.Theme, job.Config, ct);
-
+            var topics = await _lead.DecomposeThemeAsync(job.Theme, job.Config, domainContext, ct);
             job = job with { Topics = topics, Status = JobStatus.Researching };
             await _jobStore.SaveAsync(job, ct);
 
@@ -88,31 +121,67 @@ public class ResearchOrchestrator : IResearchOrchestrator
                 "Job {JobId}: decomposed into {TopicCount} topic(s)",
                 jobId, topics.Count);
 
-            // Step 2: Research each topic (Phase 1: exactly 1)
-            var papers = new List<Paper>();
+            activity?.AddEvent(new ActivityEvent("ThemeDecomposed"));
 
-            foreach (var topic in topics)
+            // Step 3: Research each topic in parallel, then peer review each paper
+            var piTasks = topics.Select(async topic =>
             {
-                _logger.LogInformation(
-                    "Job {JobId}: PI researching topic {TopicId} \"{Title}\"",
-                    jobId, topic.TopicId, topic.Title);
+                try
+                {
+                    var pi = _serviceProvider.GetRequiredService<IPrincipalInvestigatorAgent>();
+                    _logger.LogInformation(
+                        "Job {JobId}: PI researching topic {TopicId} \"{Title}\"",
+                        jobId, topic.TopicId, topic.Title);
 
-                var paper = await _pi.ResearchTopicAsync(topic, job.Config, ct);
-                papers.Add(paper);
+                    var paper = await pi.ResearchTopicAsync(topic, job.Config, ct);
+                    paper = await RunReviewCycleAsync(pi, topic, paper, job.Config, ct);
+                    return (Topic: topic, Paper: (Paper?)paper, Success: true);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // propagate cancellation
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Job {JobId}: topic {TopicId} failed", jobId, topic.TopicId);
+                    return (Topic: topic, Paper: (Paper?)null, Success: false);
+                }
+            });
 
-                // Reflect paper back onto the topic in the job record
-                var updatedTopics = job.Topics
-                    .Select(t => t.TopicId == topic.TopicId
-                        ? t with { Status = TopicStatus.Completed, Paper = paper }
-                        : t)
-                    .ToList();
+            var results = await Task.WhenAll(piTasks);
 
-                job = job with { Topics = updatedTopics };
-                await _jobStore.SaveAsync(job, ct);
+            activity?.AddEvent(new ActivityEvent("TopicResearchComplete"));
+
+            // Update topics with results
+            var papers = new List<Paper>();
+            var updatedTopics = new List<ResearchTopic>(topics.Count);
+            foreach (var result in results)
+            {
+                if (result.Success && result.Paper is not null)
+                {
+                    papers.Add(result.Paper);
+                    updatedTopics.Add(result.Topic with
+                    {
+                        Status = TopicStatus.Completed,
+                        Paper = result.Paper
+                    });
+                }
+                else
+                {
+                    updatedTopics.Add(result.Topic with { Status = TopicStatus.Failed });
+                }
             }
+            job = job with { Topics = updatedTopics };
+            await _jobStore.SaveAsync(job, ct);
 
-            // Step 3: Assemble journal (peer review skipped in Phase 1)
-            _logger.LogInformation("Job {JobId}: assembling journal", jobId);
+            if (papers.Count == 0)
+                throw new InvalidOperationException(
+                    "All topics failed during research. Cannot assemble journal.");
+
+            // Step 4: Assemble journal
+            _logger.LogInformation(
+                "Job {JobId}: assembling journal from {PaperCount} paper(s)",
+                jobId, papers.Count);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Assembling, ct);
 
             var journal = await _lead.AssembleJournalAsync(job.Theme, papers, ct);
@@ -138,9 +207,56 @@ public class ResearchOrchestrator : IResearchOrchestrator
         }
         catch (Exception ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             _logger.LogError(ex, "Job {JobId} failed", jobId);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Failed, CancellationToken.None);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Runs the peer review + revision loop for a single paper.
+    /// If PeerReviewerCount is 0, returns the paper unchanged.
+    /// </summary>
+    private async Task<Paper> RunReviewCycleAsync(
+        IPrincipalInvestigatorAgent pi,
+        ResearchTopic topic,
+        Paper paper,
+        JobConfiguration config,
+        CancellationToken ct)
+    {
+        if (config.PeerReviewerCount <= 0)
+            return paper;
+
+        for (int attempt = 0; attempt <= config.MaxRevisionsPerPaper; attempt++)
+        {
+            var reviews = await _peerReviewService.ReviewPaperAsync(paper, topic, config, ct);
+            var verdict = GetConsensusVerdict(reviews);
+            paper = paper with { Reviews = reviews };
+
+            if (verdict != ReviewVerdict.Revise || attempt == config.MaxRevisionsPerPaper)
+                break;
+
+            // Revise: re-synthesize from existing findings with feedback
+            paper = await pi.ReviseTopicAsync(topic, paper, reviews, config, ct);
+        }
+
+        return paper;
+    }
+
+    /// <summary>
+    /// Determines the consensus verdict from a set of reviews.
+    /// Majority-rules: >50% Reject → Reject; >50% Accept → Accept; otherwise Revise.
+    /// </summary>
+    private static ReviewVerdict GetConsensusVerdict(List<ReviewResult> reviews)
+    {
+        if (reviews.Count == 0) return ReviewVerdict.Accept;
+
+        var rejections = reviews.Count(r => r.Verdict == ReviewVerdict.Reject);
+        var accepts = reviews.Count(r => r.Verdict == ReviewVerdict.Accept);
+
+        if (rejections * 2 > reviews.Count) return ReviewVerdict.Reject;
+        if (accepts * 2 > reviews.Count) return ReviewVerdict.Accept;
+        return ReviewVerdict.Revise;
     }
 }

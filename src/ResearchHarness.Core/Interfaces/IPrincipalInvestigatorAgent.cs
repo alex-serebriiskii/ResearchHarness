@@ -12,4 +12,12 @@ public interface IPrincipalInvestigatorAgent
         ResearchTopic topic,
         JobConfiguration config,
         CancellationToken ct = default);
+
+    Task<Paper> ReviseTopicAsync(
+        ResearchTopic topic,
+        Paper currentPaper,
+        List<ReviewResult> reviews,
+        JobConfiguration config,
+        CancellationToken ct = default);
+
 }

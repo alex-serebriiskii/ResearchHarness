@@ -5,7 +5,7 @@ using ResearchHarness.Core.Models;
 
 namespace ResearchHarness.Infrastructure.Search;
 
-public sealed class SearchResultCache
+public sealed class SearchResultCache : ISearchResultCache
 {
     private readonly IMemoryCache _cache;
     private readonly TimeSpan _ttl;

@@ -54,13 +54,14 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
             "PI created {Count} search tasks for topic {TopicId}",
             searchTasks.Count, topic.TopicId);
 
-        // Step 2: Execute search tasks sequentially (Phase 1)
+        // Step 2: Execute search tasks concurrently under RateLimitedExecutor global semaphore
+        var labResults = await Task.WhenAll(
+            searchTasks.Select(st => _labAgent.ExecuteSearchTaskFullAsync(st, config, ct)));
+
         var allFindings = new List<Finding>();
         var sourceMap = new Dictionary<string, Source>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var searchTask in searchTasks)
+        foreach (var result in labResults)
         {
-            var result = await _labAgent.ExecuteSearchTaskFullAsync(searchTask, config, ct);
             allFindings.AddRange(result.Findings);
             foreach (var source in result.Sources)
                 sourceMap.TryAdd(source.Url, source);
@@ -82,6 +83,32 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
             Bibliography: [.. sourceMap.Values],
             ConfidenceScore: synthesisResponse.Content.ConfidenceScore,
             RevisionCount: 0,
+            Reviews: []);
+    }
+
+    public async Task<Paper> ReviseTopicAsync(
+        ResearchTopic topic,
+        Paper currentPaper,
+        List<ReviewResult> reviews,
+        JobConfiguration config,
+        CancellationToken ct = default)
+    {
+        var revisionRequest = new LlmRequest(
+            Model: config.PIModel,
+            SystemPrompt: "You are a Principal Investigator revising a research paper based on peer reviewer feedback. " +
+                          "Improve the paper while maintaining factual accuracy and evidence-based conclusions.",
+            Messages: [LlmMessage.User(BuildRevisionMessage(topic, currentPaper, reviews))],
+            OutputSchema: BuildSynthesisSchema()
+        );
+        var response = await _llm.CompleteAsync<PaperSynthesisOutput>(revisionRequest, ct);
+
+        return new Paper(
+            TopicId: currentPaper.TopicId,
+            ExecutiveSummary: response.Content.ExecutiveSummary ?? "",
+            Findings: currentPaper.Findings,
+            Bibliography: currentPaper.Bibliography,
+            ConfidenceScore: response.Content.ConfidenceScore,
+            RevisionCount: currentPaper.RevisionCount + 1,
             Reviews: []);
     }
 
@@ -116,6 +143,40 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
                   "(2) A confidence score (0.0–1.0) reflecting certainty of conclusions " +
                   "given source quality and finding consistency.");
 
+        return sb.ToString();
+    }
+
+    private static string BuildRevisionMessage(
+        ResearchTopic topic,
+        Paper currentPaper,
+        List<ReviewResult> reviews)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Research Topic: {topic.Title}");
+        sb.AppendLine($"Scope: {topic.Scope}");
+        sb.AppendLine();
+        sb.AppendLine("Current Executive Summary:");
+        sb.AppendLine(currentPaper.ExecutiveSummary);
+        sb.AppendLine();
+        sb.AppendLine("Peer Reviewer Feedback:");
+        int ri = 1;
+        foreach (var review in reviews)
+        {
+            sb.AppendLine($"Reviewer {ri++}: {review.Verdict} \u2014 {review.Feedback}");
+            foreach (var issue in review.Issues)
+                sb.AppendLine($"  - {issue}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Findings:");
+        int i = 1;
+        foreach (var finding in currentPaper.Findings)
+        {
+            sb.AppendLine($"{i++}. [{finding.SubTopic}] {finding.Summary}");
+        }
+        sb.AppendLine();
+        sb.Append(
+            "Revise the executive summary to address the reviewer feedback. " +
+            "Maintain factual accuracy; improve clarity, completeness, and coherence.");
         return sb.ToString();
     }
 

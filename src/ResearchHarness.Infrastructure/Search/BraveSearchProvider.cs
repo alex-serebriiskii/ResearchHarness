@@ -12,7 +12,7 @@ namespace ResearchHarness.Infrastructure.Search;
 public sealed class BraveSearchProvider : ISearchProvider
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly SearchResultCache _cache;
+    private readonly ISearchResultCache _cache;
     private readonly BraveSearchOptions _options;
     private readonly RateLimitedExecutor _rateLimiter;
     private readonly ILogger<BraveSearchProvider> _logger;
@@ -24,7 +24,7 @@ public sealed class BraveSearchProvider : ISearchProvider
 
     public BraveSearchProvider(
         IHttpClientFactory httpClientFactory,
-        SearchResultCache cache,
+        ISearchResultCache cache,
         IOptions<BraveSearchOptions> options,
         RateLimitedExecutor rateLimiter,
         ILogger<BraveSearchProvider> logger)

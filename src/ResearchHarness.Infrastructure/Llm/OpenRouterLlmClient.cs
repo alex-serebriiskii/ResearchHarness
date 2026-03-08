@@ -120,6 +120,7 @@ public sealed class OpenRouterLlmClient : ILlmClient
                     throw new LlmException("OpenRouter response did not contain a tool_calls function call with arguments.");
 
                 var argumentsJson = toolCall.Function.Arguments;
+                argumentsJson = LlmJsonRepair.RepairStringifiedJsonFields(argumentsJson);
                 T? deserialized;
                 try
                 {
@@ -221,13 +222,26 @@ public sealed class OpenRouterLlmClient : ILlmClient
 
     private async Task<OaiResponse> SendAsync(OaiRequest requestBody, CancellationToken ct)
     {
-        var json = JsonSerializer.Serialize(requestBody, CamelOptions);
+        // Adaptive per-request timeout: ~20 tokens/sec output + 30s overhead, capped at 300s
+        var timeoutSeconds = Math.Min(requestBody.MaxTokens / 20.0 + 30.0, 300.0);
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        var requestCt = linkedCts.Token;
+
         var endpoint = $"{_options.BaseUrl.TrimEnd('/')}/v1/chat/completions";
 
         using var httpClient = _httpClientFactory.CreateClient("OpenRouter");
 
+        var currentModel = requestBody.Model;
+        var usedFallback = false;
+
         for (int attempt = 0; ; attempt++)
         {
+            var currentRequest = currentModel != requestBody.Model
+                ? requestBody with { Model = currentModel }
+                : requestBody;
+            var json = JsonSerializer.Serialize(currentRequest, CamelOptions);
+
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint);
             httpRequest.Headers.Add("Authorization", $"Bearer {_options.ApiKey}");
             if (!string.IsNullOrEmpty(_options.SiteUrl))
@@ -236,11 +250,11 @@ public sealed class OpenRouterLlmClient : ILlmClient
                 httpRequest.Headers.Add("X-Title", _options.SiteName);
             httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var httpResponse = await httpClient.SendAsync(httpRequest, ct);
+            var httpResponse = await httpClient.SendAsync(httpRequest, requestCt);
 
             if (httpResponse.IsSuccessStatusCode)
             {
-                var responseJson = await httpResponse.Content.ReadAsStringAsync(ct);
+                var responseJson = await httpResponse.Content.ReadAsStringAsync(requestCt);
                 return JsonSerializer.Deserialize<OaiResponse>(responseJson, CamelOptions)
                     ?? throw new LlmException("OpenRouter returned an empty or null response body.");
             }
@@ -250,17 +264,29 @@ public sealed class OpenRouterLlmClient : ILlmClient
 
             if (retryable && attempt < _options.MaxRetries)
             {
+                if (statusCode == 429 && !usedFallback
+                    && httpResponse.Headers.RetryAfter is null
+                    && _options.FallbackModels.TryGetValue(requestBody.Model, out var fallbackModel))
+                {
+                    _logger.LogWarning(
+                        "OpenRouter 429 for model {Model}; retrying with fallback model {Fallback}",
+                        requestBody.Model, fallbackModel);
+                    currentModel = fallbackModel;
+                    usedFallback = true;
+                    continue; // immediate retry with fallback, no delay
+                }
+
                 var delaySeconds = statusCode == 429
                     ? GetRateLimitDelay(httpResponse.Headers.RetryAfter, attempt, _options.RateLimitRetryBaseDelaySeconds)
                     : Math.Min(Math.Pow(2, attempt), 30.0);
                 _logger.LogWarning(
                     "OpenRouter API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})",
                     statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
-                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), requestCt);
                 continue;
             }
 
-            var errorBody = await httpResponse.Content.ReadAsStringAsync(ct);
+            var errorBody = await httpResponse.Content.ReadAsStringAsync(requestCt);
             throw new LlmException($"OpenRouter API error: HTTP {statusCode}", statusCode, errorBody);
         }
     }

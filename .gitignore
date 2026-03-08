@@ -79,6 +79,12 @@ secrets.json
 # Oh My Pi coding harness — session state, not source
 .omp/
 
+# SQLite runtime databases (jobs store)
+# *.db-shm and *.db-wal are SQLite WAL-mode side-files that appear alongside the main DB
+*.db
+*.db-shm
+*.db-wal
+
 ###############################################################################
 # OS
 ###############################################################################
@@ -95,3 +101,7 @@ desktop.ini
 logs/
 *.tmp
 *~
+###############################################################################
+# Docx (System implementation spec)
+###############################################################################
+*.docx

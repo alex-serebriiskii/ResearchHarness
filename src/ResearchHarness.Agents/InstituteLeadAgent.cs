@@ -27,14 +27,15 @@ public class InstituteLeadAgent : IInstituteLeadAgent
     public async Task<List<ResearchTopic>> DecomposeThemeAsync(
         string theme,
         JobConfiguration config,
+        string? domainContext = null,
         CancellationToken ct = default)
     {
-        int topicsToRequest = Math.Min(config.MaxTopics, 1); // Phase 1: cap at 1
+        int topicsToRequest = config.MaxTopics;
 
         var request = new LlmRequest(
             Model: config.LeadModel,
             SystemPrompt: LeadDecompositionPrompt.BuildSystemPrompt(),
-            Messages: [LlmMessage.User(LeadDecompositionPrompt.BuildUserMessage(theme, topicsToRequest))],
+            Messages: [LlmMessage.User(LeadDecompositionPrompt.BuildUserMessage(theme, topicsToRequest, domainContext))],
             OutputSchema: LeadDecompositionPrompt.BuildOutputSchema()
         );
 

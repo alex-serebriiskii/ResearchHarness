@@ -94,6 +94,7 @@ public sealed class AnthropicLlmClient : ILlmClient
                     throw new LlmException("Anthropic response did not contain a tool_use content block with input.");
 
                 var inputJson = toolBlock.Input.ToJsonString();
+                inputJson = LlmJsonRepair.RepairStringifiedJsonFields(inputJson);
                 T? deserialized;
                 try
                 {
@@ -188,6 +189,12 @@ public sealed class AnthropicLlmClient : ILlmClient
 
     private async Task<AnthropicResponse> SendAsync(AnthropicRequest requestBody, CancellationToken ct)
     {
+        // Adaptive per-request timeout: ~20 tokens/sec output + 30s overhead, capped at 300s
+        var timeoutSeconds = Math.Min(requestBody.MaxTokens / 20.0 + 30.0, 300.0);
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        var requestCt = linkedCts.Token;
+
         var json = JsonSerializer.Serialize(requestBody, SnakeOptions);
         var endpoint = $"{_options.BaseUrl.TrimEnd('/')}/v1/messages";
 
@@ -200,11 +207,11 @@ public sealed class AnthropicLlmClient : ILlmClient
             httpRequest.Headers.Add("anthropic-version", _options.Version);
             httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var httpResponse = await httpClient.SendAsync(httpRequest, ct);
+            var httpResponse = await httpClient.SendAsync(httpRequest, requestCt);
 
             if (httpResponse.IsSuccessStatusCode)
             {
-                var responseJson = await httpResponse.Content.ReadAsStringAsync(ct);
+                var responseJson = await httpResponse.Content.ReadAsStringAsync(requestCt);
                 return JsonSerializer.Deserialize<AnthropicResponse>(responseJson, SnakeOptions)
                     ?? throw new LlmException("Anthropic returned an empty or null response body.");
             }
@@ -218,11 +225,11 @@ public sealed class AnthropicLlmClient : ILlmClient
                 _logger.LogWarning(
                     "Anthropic API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})",
                     statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
-                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), requestCt);
                 continue;
             }
 
-            var errorBody = await httpResponse.Content.ReadAsStringAsync(ct);
+            var errorBody = await httpResponse.Content.ReadAsStringAsync(requestCt);
             throw new LlmException($"Anthropic API error: HTTP {statusCode}", statusCode, errorBody);
         }
     }

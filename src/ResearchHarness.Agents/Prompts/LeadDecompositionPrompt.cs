@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace ResearchHarness.Agents.Prompts;
@@ -5,20 +6,30 @@ namespace ResearchHarness.Agents.Prompts;
 public static class LeadDecompositionPrompt
 {
     public static string BuildSystemPrompt() =>
-        "You are the Institute Lead of a research institute. Your role is to decompose a research theme into discrete, well-scoped research topics that can be investigated independently. Each topic must have clear boundaries, specific search angles, and expected source types. For Phase 1, produce exactly 1 topic. Be precise and academically rigorous.";
+        "You are the Institute Lead of a research institute. Your role is to decompose a research theme into discrete, well-scoped research topics that can be investigated independently. Each topic must have clear boundaries, specific search angles, and expected source types. Be precise and academically rigorous.";
 
-    public static string BuildUserMessage(string theme, int maxTopics) =>
-        $"""
-        Decompose the following research theme into {maxTopics} research topic(s):
+    public static string BuildUserMessage(string theme, int maxTopics, string? domainContext = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Decompose the following research theme into {maxTopics} research topic(s):");
+        sb.AppendLine();
+        sb.AppendLine($"Theme: {theme}");
 
-        Theme: {theme}
+        if (!string.IsNullOrWhiteSpace(domainContext))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Domain Expert Briefing:");
+            sb.AppendLine(domainContext);
+        }
 
-        For each topic, provide:
-        - A clear, specific title
-        - A scope description (what the topic covers and what it excludes)
-        - 3-5 suggested search angles (specific query directions)
-        - Expected source types (e.g., academic papers, news articles, regulatory filings, company reports)
-        """;
+        sb.AppendLine();
+        sb.AppendLine("For each topic, provide:");
+        sb.AppendLine("- A clear, specific title");
+        sb.AppendLine("- A scope description (what the topic covers and what it excludes)");
+        sb.AppendLine("- 3-5 suggested search angles (specific query directions)");
+        sb.Append("- Expected source types (e.g., academic papers, news articles, regulatory filings, company reports)");
+        return sb.ToString();
+    }
 
     public static JsonObject BuildOutputSchema() =>
         new JsonObject

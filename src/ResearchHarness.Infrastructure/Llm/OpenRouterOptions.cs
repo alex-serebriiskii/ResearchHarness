@@ -23,4 +23,10 @@ public class OpenRouterOptions
     /// Sent as the X-Title header. Appears on the OpenRouter dashboard.
     /// </summary>
     public string SiteName { get; set; } = "";
+    /// <summary>
+    /// Maps primary model identifiers to fallback models used when a 429
+    /// rate-limit response is received without a Retry-After header.
+    /// Key: primary model; Value: fallback model.
+    /// </summary>
+    public Dictionary<string, string> FallbackModels { get; set; } = [];
 }

@@ -10,11 +10,11 @@ public interface IInstituteLeadAgent
 {
     /// <summary>
     /// Decomposes a research theme into a list of ResearchTopics.
-    /// Phase 1: capped at 1 topic.
     /// </summary>
     Task<List<ResearchTopic>> DecomposeThemeAsync(
         string theme,
         JobConfiguration config,
+        string? domainContext = null,
         CancellationToken ct = default);
 
     /// <summary>

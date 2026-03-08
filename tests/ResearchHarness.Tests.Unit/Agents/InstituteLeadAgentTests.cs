@@ -56,9 +56,9 @@ public class InstituteLeadAgentTests
     }
 
     [Test]
-    public async Task DecomposeThemeAsync_Phase1Cap_LimitsToOneTopic()
+    public async Task DecomposeThemeAsync_RespectsMaxTopicsConfig_LimitsToConfiguredMax()
     {
-        // LLM returns 3 topics but Phase 1 caps at 1
+        // LLM returns 3 topics but config.MaxTopics=1 caps at 1
         var dto = new TopicDecompositionOutput(
         [
             new TopicDto("Topic 1", "Scope 1", [], []),
@@ -74,6 +74,27 @@ public class InstituteLeadAgentTests
 
         topics.Should().HaveCount(1);
         topics[0].Title.Should().Be("Topic 1");
+    }
+
+    [Test]
+    public async Task DecomposeThemeAsync_RespectsMaxTopicsConfig_ReturnsMultipleTopics()
+    {
+        // Arrange: config allows 3 topics, LLM returns 3
+        var config = new JobConfiguration(MaxTopics: 3, LeadModel: "claude-test");
+        var dto = new TopicDecompositionOutput(
+        [
+            new TopicDto("Topic 1", "Scope 1", [], []),
+            new TopicDto("Topic 2", "Scope 2", [], []),
+            new TopicDto("Topic 3", "Scope 3", [], [])
+        ]);
+
+        _llm.CompleteAsync<TopicDecompositionOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<TopicDecompositionOutput>(dto, new TokenUsage(50, 100), "tool_use"));
+
+        var topics = await _agent.DecomposeThemeAsync("broad theme", config);
+
+        topics.Should().HaveCount(3);
     }
 
     [Test]
