@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ResearchHarness.Core\ResearchHarness.Core.csproj" />
+    <ProjectReference Include="..\..\src\ResearchHarness.Agents\ResearchHarness.Agents.csproj" />
+    <ProjectReference Include="..\..\src\ResearchHarness.Orchestration\ResearchHarness.Orchestration.csproj" />
+    <ProjectReference Include="..\..\src\ResearchHarness.Infrastructure\ResearchHarness.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\ResearchHarness.Web\ResearchHarness.Web.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.19.0" />
+    <PackageReference Include="AwesomeAssertions" Version="9.4.0" />
+    <PackageReference Include="NSubstitute" Version="5.3.0" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,8 @@
+<Project>
+  <!-- Opt all Microsoft.Testing.Platform-based test projects into the .NET 10 SDK
+       new 'dotnet test' experience. Without this, dotnet test on SDK 10+ emits an
+       error because the legacy VSTest path is no longer supported for MTP apps. -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+</Project>

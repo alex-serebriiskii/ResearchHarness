@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ResearchHarness.Agents/ResearchHarness.Agents.csproj" />
+    <Project Path="src/ResearchHarness.Core/ResearchHarness.Core.csproj" />
+    <Project Path="src/ResearchHarness.Infrastructure/ResearchHarness.Infrastructure.csproj" />
+    <Project Path="src/ResearchHarness.Orchestration/ResearchHarness.Orchestration.csproj" />
+    <Project Path="src/ResearchHarness.Web/ResearchHarness.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ResearchHarness.Tests.Integration/ResearchHarness.Tests.Integration.csproj" />
+    <Project Path="tests/ResearchHarness.Tests.Unit/ResearchHarness.Tests.Unit.csproj" />
+  </Folder>
+</Solution>

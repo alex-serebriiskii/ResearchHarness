@@ -1,0 +1,97 @@
+###############################################################################
+# .NET / ASP.NET Core
+###############################################################################
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+project.lock.json
+project.fragment.lock.json
+
+# Publish output
+publish/
+**/Properties/PublishProfiles/*.pubxml.user
+
+# MSBuild logs
+msbuild.log
+msbuildwarnings.log
+msbuilddebugging.log
+
+# Diagnostic dumps and traces
+*.nettrace
+*.dmp
+
+# Code coverage
+*.coverage
+*.coveragexml
+*.cobertura.xml
+coverage/
+CoverageReport/
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+
+###############################################################################
+# Visual Studio
+###############################################################################
+
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+###############################################################################
+# JetBrains Rider
+# Rider manages volatile files via its own nested .gitignore at
+# .idea/.idea.ResearchHarness/.idea/.gitignore — do not blanket-ignore .idea/
+###############################################################################
+
+_ReSharper*/
+*.DotSettings.user
+
+###############################################################################
+# Secrets and local configuration overrides
+# appsettings.json is committed with empty keys as the schema template.
+# Real API keys (Anthropic, OpenRouter, Brave Search) belong in overrides below,
+# which are never committed.
+###############################################################################
+
+appsettings.Development.json
+appsettings.Local.json
+appsettings.Secrets.json
+appsettings.*.local.json
+secrets.json
+
+###############################################################################
+# Project-specific
+###############################################################################
+
+# Oh My Pi coding harness — session state, not source
+.omp/
+
+###############################################################################
+# OS
+###############################################################################
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+###############################################################################
+# Logs and temp files
+###############################################################################
+
+*.log
+logs/
+*.tmp
+*~
