@@ -57,3 +57,52 @@ Should the project migrate to Microsoft Semantic Kernel before continuing Phase 
 
 - **Semantic/vector retrieval is needed** over accumulated research outputs (likely Phase 4). At that point SK's memory integration avoids building embedding + vector-store plumbing from scratch.
 - **Provider surface explodes** — five or more LLM providers with divergent APIs that cannot be unified through OpenRouter. SK's connector ecosystem then pays off. Until OpenRouter stops being a viable unified endpoint, this condition is not met.
+
+
+---
+
+## 2026-03-08 — Phase 1 live-run bug audit
+
+### Context
+
+Full end-to-end pipeline runs surfaced several bugs. Documented for traceability.
+
+### Bug 1 — DTO null list fields (ArgumentNullException on List<T>?)
+
+**Root cause.** System.Text.Json does not enforce non-nullability on `List<T>` positional record parameters. When the model omits a field or returns null, STJ leaves the record field null rather than substituting an empty list.
+
+**Fix.** All `List<T>` fields in `AgentDtos.cs` made nullable (`List<T>?`). Every mapping site in `InstituteLeadAgent`, `PrincipalInvestigatorAgent`, and `LabAgentService` coalesces with `?? []`.
+
+### Bug 2 — 8B model returned stringified JSON
+
+**Root cause.** `meta-llama/llama-3.1-8b-instruct` returned tool_call arguments where array fields (`findings`, `sources`) were JSON-encoded strings rather than JSON arrays — valid JSON but wrong schema shape.
+
+**Fix.** `LabModel` upgraded to `meta-llama/llama-3.3-70b-instruct`. Cost difference is small (~5x per M tokens) vs reliability. A more robust fix — JSON repair at the client boundary — is deferred to Phase 2.
+
+### Bug 3 — Null string fields in extraction DTOs
+
+**Root cause.** Model occasionally omits optional fields (`source_url`, `sub_topic`, etc.). Non-nullable `string` record fields are null at runtime when model skips them.
+
+**Fix.** All string fields in `ExtractedFindingDto` and `ExtractedSourceDto` made nullable (`string?`). Null guards at mapping sites: null/empty URLs produce `unknown:{guid}` fallback; other fields coalesce with `?? ""`.
+
+### Bug 4 — Snake_case deserialization mismatch (silent data loss)
+
+**Root cause.** All LLM response schemas use snake_case field names (OpenAI tool-call convention). C# records are PascalCase. `PropertyNameCaseInsensitive = true` in STJ performs case-folding only — it does not strip underscores. `executive_summary` folds to `executive_summary`; `ExecutiveSummary` folds to `executivesummary`. These strings are not equal, so every snake_case field silently deserializes as null/zero.
+
+**Affected fields (all were silently null/zero before fix):** `SubTopic`, `KeyPoints`, `SourceUrl`, `RelevanceScore`, `CredibilityRationale`, `ExecutiveSummary`, `ConfidenceScore`, `OverallSummary`, `CrossTopicAnalysis`.
+
+**Fix.** Added `PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower` to `UserDeserializeOptions` in `OpenRouterLlmClient`. STJ now applies the policy to PascalCase property names, producing snake_case lookup keys that match the model's output. One-line change; no schema or DTO changes needed.
+
+**Lesson.** `PropertyNameCaseInsensitive` alone is insufficient when mixing OpenAI-convention snake_case schemas with C# PascalCase records. Always pair it with `SnakeCaseLower` or annotate every DTO field with `[JsonPropertyName]`. The policy approach is preferred — it scales automatically as DTOs grow.
+
+### Bug 5 — HttpClient 100s timeout on long LLM calls
+
+**Root cause.** `AddHttpClient("OpenRouter")` used the default 100-second HttpClient timeout. Lab extraction calls with fetched page content can produce 2000+ input tokens; model response time occasionally exceeds 100 seconds under load.
+
+**Fix.** Timeout raised to 300 seconds in `Program.cs`. A per-call adaptive timeout (based on estimated token count) is a Phase 2 quality item.
+
+### Bug 6 — Enum serialized as integers in HTTP response
+
+**Root cause.** Default STJ controller settings serialize enums as integers. `SourceCredibility` and `ResearchJobStatus` were appearing as 0/1/2/3 in API responses.
+
+**Fix.** `JsonStringEnumConverter` registered via `.AddJsonOptions` chained on `AddControllers()` in `Program.cs`.

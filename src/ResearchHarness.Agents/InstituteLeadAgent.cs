@@ -39,16 +39,16 @@ public class InstituteLeadAgent : IInstituteLeadAgent
         );
 
         var response = await _llm.CompleteAsync<TopicDecompositionOutput>(request, ct);
-        _logger.LogInformation("Lead decomposed theme into {Count} topics", response.Content.Topics.Count);
+        _logger.LogInformation("Lead decomposed theme into {Count} topics", response.Content.Topics?.Count ?? 0);
 
-        return response.Content.Topics
+        return (response.Content.Topics ?? [])
             .Take(topicsToRequest)
             .Select(t => new ResearchTopic(
                 TopicId: Guid.NewGuid(),
                 Title: t.Title,
                 Scope: t.Scope,
-                SuggestedSearchAngles: t.SuggestedSearchAngles,
-                ExpectedSourceTypes: t.ExpectedSourceTypes,
+                SuggestedSearchAngles: t.SuggestedSearchAngles ?? [],
+                ExpectedSourceTypes: t.ExpectedSourceTypes ?? [],
                 Status: TopicStatus.Pending,
                 Paper: null))
             .ToList();
@@ -78,8 +78,8 @@ public class InstituteLeadAgent : IInstituteLeadAgent
             .ToList();
 
         return new Journal(
-            OverallSummary: response.Content.OverallSummary,
-            CrossTopicAnalysis: response.Content.CrossTopicAnalysis,
+            OverallSummary: response.Content.OverallSummary ?? "",
+            CrossTopicAnalysis: response.Content.CrossTopicAnalysis ?? "",
             Papers: papers,
             MasterBibliography: dedupedSources,
             AssembledAt: DateTimeOffset.UtcNow);

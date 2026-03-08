@@ -40,11 +40,11 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         );
         var breakdownResponse = await _llm.CompleteAsync<TaskBreakdownOutput>(breakdownRequest, ct);
 
-        var searchTasks = breakdownResponse.Content.Tasks
+        var searchTasks = (breakdownResponse.Content.Tasks ?? [])
             .Take(config.MaxLabAgentsPerPI)
             .Select(t => new SearchTask(
                 t.Query,
-                t.TargetSourceTypes,
+                t.TargetSourceTypes ?? [],
                 t.ExtractionInstructions,
                 t.RelevanceCriteria,
                 t.FetchPageContent))
@@ -77,7 +77,7 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
 
         return new Paper(
             TopicId: topic.TopicId,
-            ExecutiveSummary: synthesisResponse.Content.ExecutiveSummary,
+            ExecutiveSummary: synthesisResponse.Content.ExecutiveSummary ?? "",
             Findings: allFindings,
             Bibliography: [.. sourceMap.Values],
             ConfidenceScore: synthesisResponse.Content.ConfidenceScore,

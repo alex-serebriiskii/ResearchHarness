@@ -88,30 +88,37 @@ public class LabAgentService : ILabAgentServiceInternal
         var sourceById = new Dictionary<Guid, Source>();
         var sourceByUrl = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var s in extractResponse.Content.Sources)
+        foreach (var s in extractResponse.Content.Sources ?? [])
         {
+            if (string.IsNullOrWhiteSpace(s.Url))
+                continue; // Cannot register a source without a URL
+            var url = s.Url!;
             var id = Guid.NewGuid();
             var cred = Enum.TryParse<SourceCredibility>(s.Credibility, out var parsed)
                 ? parsed
                 : SourceCredibility.Unknown;
-            sourceById[id] = new Source(id, s.Url, s.Title, s.Author, null, cred, s.CredibilityRationale);
-            sourceByUrl[s.Url] = id;
+            sourceById[id] = new Source(id, url, s.Title ?? url, s.Author, null, cred, s.CredibilityRationale ?? "");
+            sourceByUrl[url] = id;
         }
 
-        var findings = extractResponse.Content.Findings.Select(f =>
+        var findings = (extractResponse.Content.Findings ?? []).Select(f =>
         {
-            if (!sourceByUrl.TryGetValue(f.SourceUrl, out var sourceId))
+            Guid sourceId;
+            var sourceUrl = f.SourceUrl;
+            if (string.IsNullOrWhiteSpace(sourceUrl) || !sourceByUrl.TryGetValue(sourceUrl!, out sourceId))
             {
-                // Source referenced by a finding but absent from the sources list — create a fallback entry
+                // Null/empty URL or URL not in sources list — create a fallback entry
                 sourceId = Guid.NewGuid();
+                var fallbackUrl = string.IsNullOrWhiteSpace(sourceUrl) ? $"unknown:{sourceId}" : sourceUrl!;
                 var fallback = new Source(
-                    sourceId, f.SourceUrl, f.SourceUrl,
+                    sourceId, fallbackUrl, fallbackUrl,
                     null, null, SourceCredibility.Unknown, "Not assessed");
                 sourceById[sourceId] = fallback;
-                sourceByUrl[f.SourceUrl] = sourceId;
+                if (!string.IsNullOrWhiteSpace(sourceUrl))
+                    sourceByUrl[sourceUrl!] = sourceId;
             }
 
-            return new Finding(f.SubTopic, f.Summary, f.KeyPoints, [sourceId], f.RelevanceScore);
+            return new Finding(f.SubTopic ?? "", f.Summary ?? "", f.KeyPoints ?? [], [sourceId], f.RelevanceScore);
         }).ToList();
 
         return new LabTaskResult(findings, [.. sourceById.Values]);

@@ -27,7 +27,7 @@ builder.Services.AddSingleton(jobConfig);
 // ── HTTP Clients ───────────────────────────────────────────────────────────
 
 builder.Services.AddHttpClient("Anthropic");
-builder.Services.AddHttpClient("OpenRouter");
+builder.Services.AddHttpClient("OpenRouter", c => c.Timeout = TimeSpan.FromSeconds(300));
 builder.Services.AddHttpClient("BraveSearch");
 builder.Services.AddHttpClient("BravePageFetcher");
 
@@ -98,7 +98,8 @@ builder.Services.AddHostedService<ResearchJobProcessor>();
 
 // ── ASP.NET ────────────────────────────────────────────────────────────────
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 
 // ── Build ──────────────────────────────────────────────────────────────────

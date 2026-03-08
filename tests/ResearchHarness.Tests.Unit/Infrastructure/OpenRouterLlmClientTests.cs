@@ -122,7 +122,10 @@ public class OpenRouterLlmClientTests
             ApiKey = "test-key",
             BaseUrl = "https://openrouter.ai/api",
             MaxConcurrentLlmCalls = 1,
-            MaxRetries = maxRetries
+            MaxRetries = maxRetries,
+            // Tests must not perform real sleeps; zero base makes all rate-limit
+            // delays collapse to 0 s while still exercising the retry path.
+            RateLimitRetryBaseDelaySeconds = 0
         });
 
         var rateLimiter = new RateLimitedExecutor(maxLlmConcurrency: 1, maxSearchConcurrency: 1);

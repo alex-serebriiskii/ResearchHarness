@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ResearchHarness.Core.Interfaces;
@@ -31,11 +32,13 @@ public sealed class OpenRouterLlmClient : ILlmClient
     };
 
     // Used when deserializing the caller's type T from model-produced JSON.
-    // Case-insensitive so that snake_case JSON keys (from model output matching the
-    // schema) map correctly to PascalCase C# record properties.
+    // SnakeCaseLower converts PascalCase C# property names (e.g. ExecutiveSummary) to
+    // snake_case (executive_summary) for matching against model-emitted JSON keys.
+    // PropertyNameCaseInsensitive adds case-insensitive fallback for single-word fields.
     private static readonly JsonSerializerOptions UserDeserializeOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
 
     // ── Private OpenAI-compatible DTOs ────────────────────────────────────────
@@ -247,7 +250,9 @@ public sealed class OpenRouterLlmClient : ILlmClient
 
             if (retryable && attempt < _options.MaxRetries)
             {
-                var delaySeconds = Math.Min(Math.Pow(2, attempt), 30.0);
+                var delaySeconds = statusCode == 429
+                    ? GetRateLimitDelay(httpResponse.Headers.RetryAfter, attempt, _options.RateLimitRetryBaseDelaySeconds)
+                    : Math.Min(Math.Pow(2, attempt), 30.0);
                 _logger.LogWarning(
                     "OpenRouter API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})",
                     statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
@@ -259,4 +264,25 @@ public sealed class OpenRouterLlmClient : ILlmClient
             throw new LlmException($"OpenRouter API error: HTTP {statusCode}", statusCode, errorBody);
         }
     }
+
+    /// <summary>
+    /// Computes the delay to use before retrying a 429 response.
+    /// Respects the Retry-After header when provided; otherwise applies a
+    /// linear back-off with the configured base, capped at 120 s.
+    /// </summary>
+    private static double GetRateLimitDelay(
+        RetryConditionHeaderValue? retryAfter, int attempt, double baseDelaySeconds)
+    {
+        double serverDelay = 0;
+        if (retryAfter?.Delta is TimeSpan delta)
+            serverDelay = delta.TotalSeconds;
+        else if (retryAfter?.Date is DateTimeOffset date)
+            serverDelay = Math.Max((date - DateTimeOffset.UtcNow).TotalSeconds, 0);
+
+        // Grow linearly so sustained rate-limits are given progressively more
+        // time to clear without waiting forever on a fresh transient one.
+        var minimum = baseDelaySeconds * (attempt + 1);
+        return Math.Min(Math.Max(serverDelay, minimum), 120.0);
+    }
+
 }
