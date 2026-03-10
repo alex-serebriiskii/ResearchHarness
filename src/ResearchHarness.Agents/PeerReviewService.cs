@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Agents.Internal;
 using ResearchHarness.Agents.Prompts;
@@ -8,10 +9,13 @@ using ResearchHarness.Core.Models;
 
 namespace ResearchHarness.Agents;
 
-public class PeerReviewService : IPeerReviewService
+public partial class PeerReviewService : IPeerReviewService
 {
     private readonly ILlmClient _llm;
     private readonly ILogger<PeerReviewService> _logger;
+
+    private static readonly ActivitySource ActivitySource =
+        new("ResearchHarness.Agents.PeerReview", "1.0.0");
 
     public PeerReviewService(ILlmClient llm, ILogger<PeerReviewService> logger)
     {
@@ -25,10 +29,12 @@ public class PeerReviewService : IPeerReviewService
         JobConfiguration config,
         CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("ReviewPaper", ActivityKind.Internal);
+        activity?.SetTag("topic.id", topic.TopicId.ToString());
+        activity?.SetTag("reviewer.count", config.PeerReviewerCount.ToString());
+
         var reviewerCount = config.PeerReviewerCount;
-        _logger.LogInformation(
-            "Peer reviewing paper for topic {TopicId} with {ReviewerCount} reviewer(s)",
-            topic.TopicId, reviewerCount);
+        LogReviewStarted(_logger, topic.TopicId, reviewerCount);
 
         // Dispatch all reviewers in parallel
         var reviewTasks = Enumerable.Range(0, reviewerCount).Select(_ =>
@@ -72,4 +78,7 @@ public class PeerReviewService : IPeerReviewService
             _ => ReviewVerdict.Revise  // unknown defaults to Revise (conservative)
         };
     }
+
+    [LoggerMessage(2004, LogLevel.Information, "Peer reviewing paper for topic {TopicId} with {ReviewerCount} reviewer(s)")]
+    private static partial void LogReviewStarted(ILogger logger, Guid topicId, int reviewerCount);
 }

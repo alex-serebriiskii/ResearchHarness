@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace ResearchHarness.Web;
 
 /// <summary>
@@ -27,7 +30,9 @@ public sealed class ApiKeyMiddleware
             && !string.IsNullOrEmpty(_configuredKey))
         {
             if (!context.Request.Headers.TryGetValue(HeaderName, out var providedKey)
-                || providedKey != _configuredKey)
+                || !CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(providedKey.ToString()),
+                    Encoding.UTF8.GetBytes(_configuredKey)))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 await context.Response.WriteAsync("Unauthorized: invalid or missing API key.");

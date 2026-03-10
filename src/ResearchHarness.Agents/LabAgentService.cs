@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Agents.Internal;
 using ResearchHarness.Agents.Prompts;
@@ -26,12 +27,15 @@ public interface ILabAgentServiceInternal : ILabAgentService
         CancellationToken ct = default);
 }
 
-public class LabAgentService : ILabAgentServiceInternal
+public partial class LabAgentService : ILabAgentServiceInternal
 {
     private readonly ILlmClient _llm;
     private readonly ISearchProvider _search;
     private readonly IPageFetcher _pageFetcher;
     private readonly ILogger<LabAgentService> _logger;
+
+    private static readonly ActivitySource ActivitySource =
+        new("ResearchHarness.Agents.LabAgent", "1.0.0");
 
     public LabAgentService(
         ILlmClient llm,
@@ -58,10 +62,17 @@ public class LabAgentService : ILabAgentServiceInternal
         JobConfiguration config,
         CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("ExecuteSearchTask", ActivityKind.Internal);
+        activity?.SetTag("query", task.Query);
+        using (_logger.BeginScope(new Dictionary<string, object>
+        {
+            ["SearchQuery"] = task.Query
+        }))
+        {
         // Step 1: Search
         var options = new SearchOptions(Count: config.SearchResultsPerQuery);
         var searchResults = await _search.SearchAsync(task.Query, options, ct);
-        _logger.LogDebug("Lab got {Count} hits for query: {Query}", searchResults.Hits.Count, task.Query);
+        LogSearchHits(_logger, searchResults.Hits.Count, task.Query);
 
         // Step 2: Optionally fetch full page content (capped at 3 fetches to limit latency)
         var pages = new List<PageContent>();
@@ -122,5 +133,9 @@ public class LabAgentService : ILabAgentServiceInternal
         }).ToList();
 
         return new LabTaskResult(findings, [.. sourceById.Values]);
+        }
     }
+
+    [LoggerMessage(2003, LogLevel.Debug, "Lab got {Count} hits for query: {Query}")]
+    private static partial void LogSearchHits(ILogger logger, int count, string query);
 }

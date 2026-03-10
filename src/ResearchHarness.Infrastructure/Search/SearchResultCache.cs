@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using ResearchHarness.Core.Models;
@@ -16,20 +15,17 @@ public sealed class SearchResultCache : ISearchResultCache
         _ttl = options.Value.CacheTtl;
     }
 
-    public bool TryGet(string query, [NotNullWhen(true)] out SearchResults? results)
+    public ValueTask<SearchResults?> GetAsync(string query, CancellationToken ct = default)
     {
-        if (_cache.TryGetValue<SearchResults>(Key(query), out var value) && value is not null)
-        {
-            results = value;
-            return true;
-        }
-
-        results = null;
-        return false;
+        _cache.TryGetValue<SearchResults>(Key(query), out var result);
+        return ValueTask.FromResult(result);
     }
 
-    public void Set(string query, SearchResults results) =>
+    public ValueTask SetAsync(string query, SearchResults results, CancellationToken ct = default)
+    {
         _cache.Set(Key(query), results, _ttl);
+        return ValueTask.CompletedTask;
+    }
 
     private static string Key(string query) => query.Trim().ToLowerInvariant();
 }

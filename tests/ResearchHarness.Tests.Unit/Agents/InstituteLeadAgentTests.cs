@@ -155,4 +155,36 @@ public class InstituteLeadAgentTests
         journal.MasterBibliography.Should().HaveCount(2);
         journal.MasterBibliography.Select(s => s.Url).Should().OnlyHaveUniqueItems();
     }
+
+    [Test]
+    public async Task DecomposeThemeAsync_NullDtoFields_ProducesDefaults()
+    {
+        var dto = new TopicDecompositionOutput([new TopicDto("T", "S", null, null)]);
+
+        _llm.CompleteAsync<TopicDecompositionOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<TopicDecompositionOutput>(dto, new TokenUsage(10, 20), "tool_use"));
+
+        var topics = await _agent.DecomposeThemeAsync("theme", _config);
+
+        topics.Should().HaveCount(1);
+        topics[0].SuggestedSearchAngles.Should().BeEmpty();
+        topics[0].ExpectedSourceTypes.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task AssembleJournalAsync_NullSummaryFields_ProducesEmptyStrings()
+    {
+        var paper = new Paper(Guid.NewGuid(), "Summary", [], [], 0.9, 0, []);
+
+        var journalOutput = new JournalAssemblyOutput(null, null);
+        _llm.CompleteAsync<JournalAssemblyOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<JournalAssemblyOutput>(journalOutput, new TokenUsage(10, 20), "tool_use"));
+
+        var journal = await _agent.AssembleJournalAsync("theme", [paper]);
+
+        journal.OverallSummary.Should().Be("");
+        journal.CrossTopicAnalysis.Should().Be("");
+    }
 }

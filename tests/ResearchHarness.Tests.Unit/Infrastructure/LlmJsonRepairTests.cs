@@ -108,4 +108,68 @@ public class LlmJsonRepairTests
         LlmJsonRepair.RepairStringifiedJsonFields(input).Should().Be(input);
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task NestedStringifiedArray_IsRepaired()
+    {
+        var inner = new JsonArray(new JsonObject { ["sub_topic"] = "AI" }).ToJsonString();
+        var obj = new JsonObject
+        {
+            ["metadata"] = new JsonObject
+            {
+                ["findings"] = JsonValue.Create(inner)
+            }
+        };
+        var input = obj.ToJsonString();
+
+        var repaired = LlmJsonRepair.RepairStringifiedJsonFields(input);
+
+        using var doc = JsonDocument.Parse(repaired);
+        doc.RootElement.GetProperty("metadata").GetProperty("findings").ValueKind.Should().Be(JsonValueKind.Array);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task DeeplyNestedStringifiedField_IsRepaired()
+    {
+        var innerJson = new JsonObject { ["key"] = "val" }.ToJsonString();
+        var obj = new JsonObject
+        {
+            ["level1"] = new JsonObject
+            {
+                ["level2"] = new JsonObject
+                {
+                    ["data"] = JsonValue.Create(innerJson)
+                }
+            }
+        };
+        var input = obj.ToJsonString();
+
+        var repaired = LlmJsonRepair.RepairStringifiedJsonFields(input);
+
+        using var doc = JsonDocument.Parse(repaired);
+        doc.RootElement.GetProperty("level1").GetProperty("level2").GetProperty("data").ValueKind.Should().Be(JsonValueKind.Object);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task StringifiedFieldInsideArray_IsRepaired()
+    {
+        var sourcesJson = new JsonArray(new JsonObject { ["url"] = "http://x.com" }).ToJsonString();
+        var obj = new JsonObject
+        {
+            ["items"] = new JsonArray(
+                new JsonObject
+                {
+                    ["sources"] = JsonValue.Create(sourcesJson)
+                })
+        };
+        var input = obj.ToJsonString();
+
+        var repaired = LlmJsonRepair.RepairStringifiedJsonFields(input);
+
+        using var doc = JsonDocument.Parse(repaired);
+        doc.RootElement.GetProperty("items")[0].GetProperty("sources").ValueKind.Should().Be(JsonValueKind.Array);
+        await Task.CompletedTask;
+    }
 }

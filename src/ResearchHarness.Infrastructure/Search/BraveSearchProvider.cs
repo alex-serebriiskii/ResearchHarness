@@ -6,6 +6,7 @@ using ResearchHarness.Core.Interfaces;
 using ResearchHarness.Core.Models;
 using ResearchHarness.Infrastructure.Llm;
 using ResearchHarness.Infrastructure.Search.Dto;
+using ResearchHarness.Infrastructure.Telemetry;
 
 namespace ResearchHarness.Infrastructure.Search;
 
@@ -15,6 +16,7 @@ public sealed class BraveSearchProvider : ISearchProvider
     private readonly ISearchResultCache _cache;
     private readonly BraveSearchOptions _options;
     private readonly RateLimitedExecutor _rateLimiter;
+    private readonly ResearchMetrics _metrics;
     private readonly ILogger<BraveSearchProvider> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -27,12 +29,14 @@ public sealed class BraveSearchProvider : ISearchProvider
         ISearchResultCache cache,
         IOptions<BraveSearchOptions> options,
         RateLimitedExecutor rateLimiter,
+        ResearchMetrics metrics,
         ILogger<BraveSearchProvider> logger)
     {
         _httpClientFactory = httpClientFactory;
         _cache = cache;
         _options = options.Value;
         _rateLimiter = rateLimiter;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -41,13 +45,18 @@ public sealed class BraveSearchProvider : ISearchProvider
         SearchOptions? options = null,
         CancellationToken ct = default)
     {
-        if (_cache.TryGet(query, out var cached))
+        var cached = await _cache.GetAsync(query, ct);
+        if (cached is not null)
+        {
+            _metrics.RecordSearchCacheHit();
             return cached;
+        }
+        _metrics.RecordSearchCacheMiss();
 
         var results = await _rateLimiter.ExecuteSearchCallAsync(
             () => FetchFromApiAsync(query, options, ct), ct);
 
-        _cache.Set(query, results);
+        await _cache.SetAsync(query, results, ct);
         return results;
     }
 

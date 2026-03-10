@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
@@ -10,11 +11,14 @@ using ResearchHarness.Core.Models;
 
 namespace ResearchHarness.Agents;
 
-public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
+public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
 {
     private readonly ILlmClient _llm;
     private readonly ILabAgentServiceInternal _labAgent;
     private readonly ILogger<PrincipalInvestigatorAgent> _logger;
+
+    private static readonly ActivitySource ActivitySource =
+        new("ResearchHarness.Agents.PrincipalInvestigator", "1.0.0");
 
     public PrincipalInvestigatorAgent(
         ILlmClient llm,
@@ -31,6 +35,15 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         JobConfiguration config,
         CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("ResearchTopic", ActivityKind.Internal);
+        activity?.SetTag("topic.id", topic.TopicId.ToString());
+        activity?.SetTag("model", config.PIModel);
+        using (_logger.BeginScope(new Dictionary<string, object>
+        {
+            ["TopicId"] = topic.TopicId,
+            ["TopicTitle"] = topic.Title
+        }))
+        {
         // Step 1: Break topic into search tasks
         var breakdownRequest = new LlmRequest(
             Model: config.PIModel,
@@ -50,9 +63,7 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
                 t.FetchPageContent))
             .ToList();
 
-        _logger.LogInformation(
-            "PI created {Count} search tasks for topic {TopicId}",
-            searchTasks.Count, topic.TopicId);
+        LogSearchTasksCreated(_logger, searchTasks.Count, topic.TopicId);
 
         // Step 2: Execute search tasks concurrently under RateLimitedExecutor global semaphore
         var labResults = await Task.WhenAll(
@@ -84,6 +95,7 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
             ConfidenceScore: synthesisResponse.Content.ConfidenceScore,
             RevisionCount: 0,
             Reviews: []);
+        }
     }
 
     public async Task<Paper> ReviseTopicAsync(
@@ -93,6 +105,15 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         JobConfiguration config,
         CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("ReviseTopic", ActivityKind.Internal);
+        activity?.SetTag("topic.id", topic.TopicId.ToString());
+        activity?.SetTag("model", config.PIModel);
+        using (_logger.BeginScope(new Dictionary<string, object>
+        {
+            ["TopicId"] = topic.TopicId,
+            ["RevisionCount"] = currentPaper.RevisionCount + 1
+        }))
+        {
         var revisionRequest = new LlmRequest(
             Model: config.PIModel,
             SystemPrompt: "You are a Principal Investigator revising a research paper based on peer reviewer feedback. " +
@@ -109,7 +130,8 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
             Bibliography: currentPaper.Bibliography,
             ConfidenceScore: response.Content.ConfidenceScore,
             RevisionCount: currentPaper.RevisionCount + 1,
-            Reviews: []);
+            Reviews: currentPaper.Reviews);
+        }
     }
 
     private static string BuildSynthesisMessage(
@@ -196,4 +218,7 @@ public class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
                 }
             }
         };
+
+    [LoggerMessage(2002, LogLevel.Information, "PI created {Count} search tasks for topic {TopicId}")]
+    private static partial void LogSearchTasksCreated(ILogger logger, int count, Guid topicId);
 }

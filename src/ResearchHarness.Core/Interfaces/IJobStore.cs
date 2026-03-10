@@ -4,8 +4,6 @@ namespace ResearchHarness.Core.Interfaces;
 
 /// <summary>
 /// Persistence layer for research jobs.
-/// Phase 1: backed by InMemoryJobStore.
-/// Phase 2+: backed by EF Core + SQL.
 /// </summary>
 public interface IJobStore
 {
@@ -14,4 +12,7 @@ public interface IJobStore
     Task<JobStatus?> GetStatusAsync(Guid jobId, CancellationToken ct = default);
     Task<Journal?> GetJournalAsync(Guid jobId, CancellationToken ct = default);
     Task UpdateStatusAsync(Guid jobId, JobStatus status, CancellationToken ct = default);
+    Task<(IReadOnlyList<ResearchJob> Jobs, int Total)> ListJobsAsync(
+        int offset = 0, int limit = 20, JobStatus? status = null, CancellationToken ct = default);
+    Task<JobCostSummary?> GetCostAsync(Guid jobId, CancellationToken ct = default);
 }

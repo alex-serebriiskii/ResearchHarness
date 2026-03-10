@@ -19,6 +19,7 @@ public class ResearchOrchestratorTests
     private IConsultingFirmService _consultingFirmService = null!;
     private IServiceProvider _serviceProvider = null!;
     private IJobStore _jobStore = null!;
+    private ITokenTracker _tokenTracker = null!;
     private Channel<Guid> _channel = null!;
     private ResearchOrchestrator _orchestrator = null!;
     private JobConfiguration _config = null!;
@@ -59,6 +60,8 @@ public class ResearchOrchestratorTests
         _peerReviewService = Substitute.For<IPeerReviewService>();
         _consultingFirmService = Substitute.For<IConsultingFirmService>();
         _jobStore = Substitute.For<IJobStore>();
+        _tokenTracker = Substitute.For<ITokenTracker>();
+        _tokenTracker.GetSummary().Returns(new JobCostSummary(0, 0, 0, []));
         _channel = Channel.CreateUnbounded<Guid>();
 
         // Config: peer review and consulting disabled for basic tests
@@ -74,10 +77,11 @@ public class ResearchOrchestratorTests
             _consultingFirmService,
             _serviceProvider,
             _jobStore,
+            _tokenTracker,
             _channel.Writer,
             _config,
-            Substitute.For<ILogger<ResearchOrchestrator>>()
-        );
+            Substitute.For<ILogger<ResearchOrchestrator>>())
+        ;
     }
 
     [Test]
@@ -197,9 +201,9 @@ public class ResearchOrchestratorTests
 
         // New orchestrator with MaxTopics=2 config
         var orchestrator = new ResearchOrchestrator(
-            _lead, _peerReviewService, _consultingFirmService,
-            _serviceProvider, _jobStore, _channel.Writer, config,
-            Substitute.For<ILogger<ResearchOrchestrator>>());
+                    _lead, _peerReviewService, _consultingFirmService,
+                    _serviceProvider, _jobStore, _tokenTracker, _channel.Writer, config,
+                    Substitute.For<ILogger<ResearchOrchestrator>>());
 
         _jobStore.GetAsync(jobId, Arg.Any<CancellationToken>()).Returns(job);
         _lead.DecomposeThemeAsync(Arg.Any<string>(), Arg.Any<JobConfiguration>(),
@@ -226,9 +230,9 @@ public class ResearchOrchestratorTests
             [], null, DateTimeOffset.UtcNow, null, config);
 
         var orchestrator = new ResearchOrchestrator(
-            _lead, _peerReviewService, _consultingFirmService,
-            _serviceProvider, _jobStore, _channel.Writer, config,
-            Substitute.For<ILogger<ResearchOrchestrator>>());
+                    _lead, _peerReviewService, _consultingFirmService,
+                    _serviceProvider, _jobStore, _tokenTracker, _channel.Writer, config,
+                    Substitute.For<ILogger<ResearchOrchestrator>>());
 
         _consultingFirmService.GetDomainBriefingAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns("domain briefing content");
@@ -256,9 +260,9 @@ public class ResearchOrchestratorTests
             [], null, DateTimeOffset.UtcNow, null, config);
 
         var orchestrator = new ResearchOrchestrator(
-            _lead, _peerReviewService, _consultingFirmService,
-            _serviceProvider, _jobStore, _channel.Writer, config,
-            Substitute.For<ILogger<ResearchOrchestrator>>());
+                    _lead, _peerReviewService, _consultingFirmService,
+                    _serviceProvider, _jobStore, _tokenTracker, _channel.Writer, config,
+                    Substitute.For<ILogger<ResearchOrchestrator>>());
 
         var acceptReview = new ReviewResult(ReviewVerdict.Accept, "Good paper", [], DateTimeOffset.UtcNow);
         _jobStore.GetAsync(jobId, Arg.Any<CancellationToken>()).Returns(job);
@@ -294,9 +298,9 @@ public class ResearchOrchestratorTests
             [], null, DateTimeOffset.UtcNow, null, config);
 
         var orchestrator = new ResearchOrchestrator(
-            _lead, _peerReviewService, _consultingFirmService,
-            _serviceProvider, _jobStore, _channel.Writer, config,
-            Substitute.For<ILogger<ResearchOrchestrator>>());
+                    _lead, _peerReviewService, _consultingFirmService,
+                    _serviceProvider, _jobStore, _tokenTracker, _channel.Writer, config,
+                    Substitute.For<ILogger<ResearchOrchestrator>>());
 
         var reviseReview = new ReviewResult(ReviewVerdict.Revise, "Needs more clarity", ["Add sources"], DateTimeOffset.UtcNow);
         var acceptReview = new ReviewResult(ReviewVerdict.Accept, "Improved", [], DateTimeOffset.UtcNow);
@@ -344,9 +348,9 @@ public class ResearchOrchestratorTests
             [], null, DateTimeOffset.UtcNow, null, config);
 
         var orchestrator = new ResearchOrchestrator(
-            _lead, _peerReviewService, _consultingFirmService,
-            _serviceProvider, _jobStore, _channel.Writer, config,
-            Substitute.For<ILogger<ResearchOrchestrator>>());
+                    _lead, _peerReviewService, _consultingFirmService,
+                    _serviceProvider, _jobStore, _tokenTracker, _channel.Writer, config,
+                    Substitute.For<ILogger<ResearchOrchestrator>>());
 
         _jobStore.GetAsync(jobId, Arg.Any<CancellationToken>()).Returns(job);
         _lead.DecomposeThemeAsync(Arg.Any<string>(), Arg.Any<JobConfiguration>(),

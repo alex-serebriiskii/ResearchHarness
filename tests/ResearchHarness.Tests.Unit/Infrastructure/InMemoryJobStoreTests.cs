@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using ResearchHarness.Core;
 using ResearchHarness.Core.Models;
-using ResearchHarness.Infrastructure.Persistence;
+
 
 namespace ResearchHarness.Tests.Unit.Infrastructure;
 

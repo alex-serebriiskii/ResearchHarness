@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Agents.Prompts;
 using ResearchHarness.Core;
@@ -6,11 +7,14 @@ using ResearchHarness.Core.Llm;
 
 namespace ResearchHarness.Agents;
 
-public class ConsultingFirmService : IConsultingFirmService
+public partial class ConsultingFirmService : IConsultingFirmService
 {
     private readonly ILlmClient _llm;
     private readonly JobConfiguration _config;
     private readonly ILogger<ConsultingFirmService> _logger;
+
+    private static readonly ActivitySource ActivitySource =
+        new("ResearchHarness.Agents.ConsultingFirm", "1.0.0");
 
     public ConsultingFirmService(
         ILlmClient llm,
@@ -27,7 +31,10 @@ public class ConsultingFirmService : IConsultingFirmService
         string uncertaintyContext,
         CancellationToken ct = default)
     {
-        _logger.LogInformation("Consulting firm generating domain briefing for theme: {Theme}", theme);
+        using var activity = ActivitySource.StartActivity("GetDomainBriefing", ActivityKind.Internal);
+        activity?.SetTag("theme", theme);
+
+        LogDomainBriefingStarted(_logger, theme);
 
         var request = new LlmRequest(
             Model: _config.LeadModel,
@@ -38,4 +45,6 @@ public class ConsultingFirmService : IConsultingFirmService
         var response = await _llm.CompleteAsync(request, ct);
         return response.Content;
     }
+    [LoggerMessage(2005, LogLevel.Information, "Consulting firm generating domain briefing for theme: {Theme}")]
+    private static partial void LogDomainBriefingStarted(ILogger logger, string theme);
 }

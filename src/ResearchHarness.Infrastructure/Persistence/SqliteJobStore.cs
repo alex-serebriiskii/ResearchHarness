@@ -87,6 +87,56 @@ public sealed class SqliteJobStore : IJobStore
         await SaveAsync(job with { Status = status }, ct);
     }
 
+    public async Task<(IReadOnlyList<ResearchJob> Jobs, int Total)> ListJobsAsync(
+        int offset = 0, int limit = 20, JobStatus? status = null, CancellationToken ct = default)
+    {
+        await using var conn = await OpenAsync(ct);
+        await EnsureTableAsync(conn, ct);
+
+        await using var countCmd = conn.CreateCommand();
+        if (status.HasValue)
+        {
+            countCmd.CommandText = "SELECT COUNT(*) FROM Jobs WHERE Status = $status";
+            countCmd.Parameters.AddWithValue("$status", status.Value.ToString());
+        }
+        else
+        {
+            countCmd.CommandText = "SELECT COUNT(*) FROM Jobs";
+        }
+        var total = Convert.ToInt32(await countCmd.ExecuteScalarAsync(ct));
+
+        await using var dataCmd = conn.CreateCommand();
+        if (status.HasValue)
+        {
+            dataCmd.CommandText = "SELECT DataJson FROM Jobs WHERE Status = $status ORDER BY CreatedAt DESC LIMIT $limit OFFSET $offset";
+            dataCmd.Parameters.AddWithValue("$status", status.Value.ToString());
+        }
+        else
+        {
+            dataCmd.CommandText = "SELECT DataJson FROM Jobs ORDER BY CreatedAt DESC LIMIT $limit OFFSET $offset";
+        }
+        dataCmd.Parameters.AddWithValue("$limit", limit);
+        dataCmd.Parameters.AddWithValue("$offset", offset);
+
+        var jobs = new List<ResearchJob>();
+        await using var reader = await dataCmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var json = reader.GetString(0);
+            var job = JsonSerializer.Deserialize<ResearchJob>(json, SerializerOptions);
+            if (job is not null)
+                jobs.Add(job);
+        }
+
+        return (jobs, total);
+    }
+
+    public async Task<JobCostSummary?> GetCostAsync(Guid jobId, CancellationToken ct = default)
+    {
+        var job = await GetAsync(jobId, ct);
+        return job?.CostSummary;
+    }
+
     private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
     {
         var conn = new SqliteConnection(_connectionString);

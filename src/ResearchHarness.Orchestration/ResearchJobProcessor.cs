@@ -11,29 +11,35 @@ namespace ResearchHarness.Orchestration;
 /// scoped IResearchOrchestrator. One job runs at a time in Phase 1.
 /// Phase 2+: add a SemaphoreSlim to bound parallel job execution.
 /// </summary>
-public sealed class ResearchJobProcessor : BackgroundService
+public sealed partial class ResearchJobProcessor : BackgroundService
 {
     private readonly ChannelReader<Guid> _queue;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IJobCancellationService _cancellationService;
     private readonly ILogger<ResearchJobProcessor> _logger;
 
     public ResearchJobProcessor(
         ChannelReader<Guid> queue,
         IServiceScopeFactory scopeFactory,
+        IJobCancellationService cancellationService,
         ILogger<ResearchJobProcessor> logger)
     {
         _queue = queue;
         _scopeFactory = scopeFactory;
+        _cancellationService = cancellationService;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("ResearchJobProcessor started, waiting for jobs");
+        LogProcessorStarted(_logger);
 
         await foreach (var jobId in _queue.ReadAllAsync(stoppingToken))
         {
-            _logger.LogInformation("ResearchJobProcessor dequeued job {JobId}", jobId);
+            LogJobDequeued(_logger, jobId);
+
+            var perJobToken = _cancellationService.RegisterJob(jobId);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, perJobToken);
 
             using var scope = _scopeFactory.CreateScope();
             var orchestrator = scope.ServiceProvider
@@ -41,23 +47,40 @@ public sealed class ResearchJobProcessor : BackgroundService
 
             try
             {
-                await orchestrator.RunJobAsync(jobId, stoppingToken);
+                await orchestrator.RunJobAsync(jobId, linkedCts.Token);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                _logger.LogWarning(
-                    "Job {JobId} processing interrupted by shutdown", jobId);
+                LogJobInterruptedByShutdown(_logger, jobId);
                 break;
             }
             catch (Exception ex)
             {
-                // Orchestrator already marked the job as Failed and logged the error.
-                // We catch here to prevent the processor from dying on a single job failure.
-                _logger.LogError(ex,
-                    "ResearchJobProcessor: job {JobId} threw after orchestrator handling", jobId);
+                LogJobProcessorError(_logger, ex, jobId);
+            }
+            finally
+            {
+                _cancellationService.CompleteJob(jobId);
             }
         }
 
-        _logger.LogInformation("ResearchJobProcessor stopped");
+        LogProcessorStopped(_logger);
     }
+
+    // ── Structured log methods ────────────────────────────────────────────────
+
+    [LoggerMessage(1011, LogLevel.Information, "ResearchJobProcessor started, waiting for jobs")]
+    private static partial void LogProcessorStarted(ILogger logger);
+
+    [LoggerMessage(1012, LogLevel.Information, "ResearchJobProcessor dequeued job {JobId}")]
+    private static partial void LogJobDequeued(ILogger logger, Guid jobId);
+
+    [LoggerMessage(1013, LogLevel.Warning, "Job {JobId} processing interrupted by shutdown")]
+    private static partial void LogJobInterruptedByShutdown(ILogger logger, Guid jobId);
+
+    [LoggerMessage(1014, LogLevel.Error, "ResearchJobProcessor: job {JobId} threw after orchestrator handling")]
+    private static partial void LogJobProcessorError(ILogger logger, Exception ex, Guid jobId);
+
+    [LoggerMessage(1015, LogLevel.Information, "ResearchJobProcessor stopped")]
+    private static partial void LogProcessorStopped(ILogger logger);
 }

@@ -9,7 +9,7 @@ using ResearchHarness.Core.Llm;
 
 namespace ResearchHarness.Infrastructure.Llm;
 
-public sealed class AnthropicLlmClient : ILlmClient
+public sealed partial class AnthropicLlmClient : ILlmClient
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RateLimitedExecutor _rateLimiter;
@@ -20,6 +20,12 @@ public sealed class AnthropicLlmClient : ILlmClient
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private static readonly JsonSerializerOptions UserDeserializeOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
 
     // ── Private Anthropic API DTOs ────────────────────────────────────────────
@@ -78,9 +84,7 @@ public sealed class AnthropicLlmClient : ILlmClient
             var response = await SendAsync(anthropicRequest, ct);
 
             var usage = response.Usage ?? new AnthropicUsage(0, 0);
-            _logger.LogInformation(
-                "LLM call completed: {InputTokens} in, {OutputTokens} out, model {Model}",
-                usage.InputTokens, usage.OutputTokens, request.Model);
+            LogLlmCallCompleted(_logger, usage.InputTokens, usage.OutputTokens, request.Model);
 
             var tokenUsage = new TokenUsage(usage.InputTokens, usage.OutputTokens);
             var stopReason = response.StopReason ?? "";
@@ -98,7 +102,7 @@ public sealed class AnthropicLlmClient : ILlmClient
                 T? deserialized;
                 try
                 {
-                    deserialized = JsonSerializer.Deserialize<T>(inputJson);
+                    deserialized = JsonSerializer.Deserialize<T>(inputJson, UserDeserializeOptions);
                 }
                 catch (JsonException ex)
                 {
@@ -124,7 +128,7 @@ public sealed class AnthropicLlmClient : ILlmClient
                 T? deserialized;
                 try
                 {
-                    deserialized = JsonSerializer.Deserialize<T>(text);
+                    deserialized = JsonSerializer.Deserialize<T>(text, UserDeserializeOptions);
                 }
                 catch (JsonException ex)
                 {
@@ -148,9 +152,7 @@ public sealed class AnthropicLlmClient : ILlmClient
             var response = await SendAsync(anthropicRequest, ct);
 
             var usage = response.Usage ?? new AnthropicUsage(0, 0);
-            _logger.LogInformation(
-                "LLM call completed: {InputTokens} in, {OutputTokens} out, model {Model}",
-                usage.InputTokens, usage.OutputTokens, request.Model);
+            LogLlmCallCompleted(_logger, usage.InputTokens, usage.OutputTokens, request.Model);
 
             var textBlock = response.Content?.FirstOrDefault(b => b.Type == "text");
             var text = textBlock?.Text ?? "";
@@ -222,9 +224,7 @@ public sealed class AnthropicLlmClient : ILlmClient
             if (retryable && attempt < _options.MaxRetries)
             {
                 var delaySeconds = Math.Min(Math.Pow(2, attempt), 30.0);
-                _logger.LogWarning(
-                    "Anthropic API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})",
-                    statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
+                LogRetry(_logger, statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
                 await Task.Delay(TimeSpan.FromSeconds(delaySeconds), requestCt);
                 continue;
             }
@@ -233,4 +233,10 @@ public sealed class AnthropicLlmClient : ILlmClient
             throw new LlmException($"Anthropic API error: HTTP {statusCode}", statusCode, errorBody);
         }
     }
+    [LoggerMessage(3004, LogLevel.Information, "LLM call completed: {InputTokens} in, {OutputTokens} out, model {Model}")]
+    private static partial void LogLlmCallCompleted(ILogger logger, int inputTokens, int outputTokens, string model);
+
+    [LoggerMessage(3005, LogLevel.Warning, "Anthropic API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})")]
+    private static partial void LogRetry(ILogger logger, int statusCode, double delay, int attempt, int maxRetries);
+
 }

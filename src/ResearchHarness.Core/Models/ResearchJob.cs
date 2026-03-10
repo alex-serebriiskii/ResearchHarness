@@ -9,5 +9,6 @@ public record ResearchJob(
     Journal? Result,
     DateTimeOffset CreatedAt,
     DateTimeOffset? CompletedAt,
-    JobConfiguration Config
+    JobConfiguration Config,
+    JobCostSummary? CostSummary = null
 );

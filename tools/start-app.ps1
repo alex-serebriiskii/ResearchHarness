@@ -28,6 +28,9 @@ if (-not $NoBuild) {
     }
 }
 
+# Ensure Development environment even when launched outside dotnet run
+$env:ASPNETCORE_ENVIRONMENT = 'Development'
+
 # Start app
 $startArgs = @{
     FilePath         = "dotnet"

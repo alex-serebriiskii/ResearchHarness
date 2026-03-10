@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Agents.Internal;
 using ResearchHarness.Agents.Prompts;
@@ -8,11 +9,14 @@ using ResearchHarness.Core.Models;
 
 namespace ResearchHarness.Agents;
 
-public class InstituteLeadAgent : IInstituteLeadAgent
+public partial class InstituteLeadAgent : IInstituteLeadAgent
 {
     private readonly ILlmClient _llm;
     private readonly JobConfiguration _config;
     private readonly ILogger<InstituteLeadAgent> _logger;
+
+    private static readonly ActivitySource ActivitySource =
+        new("ResearchHarness.Agents.InstituteLeadAgent", "1.0.0");
 
     public InstituteLeadAgent(
         ILlmClient llm,
@@ -30,6 +34,9 @@ public class InstituteLeadAgent : IInstituteLeadAgent
         string? domainContext = null,
         CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("DecomposeTheme", ActivityKind.Internal);
+        activity?.SetTag("model", config.LeadModel);
+
         int topicsToRequest = config.MaxTopics;
 
         var request = new LlmRequest(
@@ -40,7 +47,7 @@ public class InstituteLeadAgent : IInstituteLeadAgent
         );
 
         var response = await _llm.CompleteAsync<TopicDecompositionOutput>(request, ct);
-        _logger.LogInformation("Lead decomposed theme into {Count} topics", response.Content.Topics?.Count ?? 0);
+        LogThemeDecomposed(_logger, response.Content.Topics?.Count ?? 0);
 
         return (response.Content.Topics ?? [])
             .Take(topicsToRequest)
@@ -60,6 +67,10 @@ public class InstituteLeadAgent : IInstituteLeadAgent
         List<Paper> papers,
         CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("AssembleJournal", ActivityKind.Internal);
+        activity?.SetTag("model", _config.LeadModel);
+        activity?.SetTag("paper.count", papers.Count.ToString());
+
         var config = _config;
 
         var request = new LlmRequest(
@@ -85,4 +96,7 @@ public class InstituteLeadAgent : IInstituteLeadAgent
             MasterBibliography: dedupedSources,
             AssembledAt: DateTimeOffset.UtcNow);
     }
+
+    [LoggerMessage(2001, LogLevel.Information, "Lead decomposed theme into {Count} topics")]
+    private static partial void LogThemeDecomposed(ILogger logger, int count);
 }

@@ -251,4 +251,47 @@ public class LabAgentServiceTests
         result.Sources[0].Credibility.Should().Be(SourceCredibility.Unknown);
         result.Findings[0].SourceRefs[0].Should().Be(result.Sources[0].SourceId);
     }
+
+    [Test]
+    public async Task ExecuteSearchTaskFullAsync_NullExtractionFields_ProducesDefaults()
+    {
+        _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(BuildSearchResults(1));
+
+        var output = new LabExtractionOutput(
+        [
+            new ExtractedFindingDto(null, null, null, "https://source1.com/article", 0.7)
+        ],
+        [
+            new ExtractedSourceDto("https://source1.com/article", null, null, "High", null)
+        ]);
+
+        _llm.CompleteAsync<LabExtractionOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<LabExtractionOutput>(output, new TokenUsage(10, 20), "tool_use"));
+
+        var result = await _lab.ExecuteSearchTaskFullAsync(BasicTask, _config);
+
+        result.Findings[0].SubTopic.Should().Be("");
+        result.Findings[0].Summary.Should().Be("");
+        result.Findings[0].KeyPoints.Should().BeEmpty();
+        result.Sources[0].CredibilityRationale.Should().Be("");
+    }
+
+    [Test]
+    public async Task ExecuteSearchTaskFullAsync_NullSourcesAndFindings_ProducesEmptyLists()
+    {
+        _search.SearchAsync(Arg.Any<string>(), Arg.Any<SearchOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(BuildSearchResults(1));
+
+        var output = new LabExtractionOutput(null, null);
+        _llm.CompleteAsync<LabExtractionOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<LabExtractionOutput>(output, new TokenUsage(10, 20), "tool_use"));
+
+        var result = await _lab.ExecuteSearchTaskFullAsync(BasicTask, _config);
+
+        result.Findings.Should().BeEmpty();
+        result.Sources.Should().BeEmpty();
+    }
 }

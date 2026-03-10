@@ -7,8 +7,9 @@ namespace ResearchHarness.Infrastructure.Llm;
 /// Pre-deserialization repair for LLM responses where nested JSON is returned
 /// as an escaped string instead of inline JSON. Some models (typically smaller 8B
 /// models) produce: {"findings": "[{...}]"} instead of {"findings": [{...}]}.
-/// This method repairs top-level string fields whose value parses as a JSON array
+/// This method repairs string fields whose value parses as a JSON array
 /// or object, replacing the string node with the parsed JSON in-place.
+/// It recurses into nested objects and arrays to handle deeply nested cases.
 /// </summary>
 internal static class LlmJsonRepair
 {
@@ -24,31 +25,58 @@ internal static class LlmJsonRepair
         if (root is not JsonObject obj)
             return rawJson;
 
+        return RepairObject(obj) ? obj.ToJsonString() : rawJson;
+    }
+
+    private static bool RepairObject(JsonObject obj)
+    {
         var modified = false;
         foreach (var key in obj.Select(kv => kv.Key).ToArray())
         {
-            if (obj[key] is not JsonValue val)
-                continue;
-            if (!val.TryGetValue<string>(out var str))
-                continue;
-
-            var trimmed = str.Trim();
-            if ((trimmed.StartsWith('[') && trimmed.EndsWith(']')) ||
-                (trimmed.StartsWith('{') && trimmed.EndsWith('}')))
+            var node = obj[key];
+            if (node is JsonValue val && val.TryGetValue<string>(out var str))
             {
-                try
+                var trimmed = str.Trim();
+                if ((trimmed.StartsWith('[') && trimmed.EndsWith(']')) ||
+                    (trimmed.StartsWith('{') && trimmed.EndsWith('}')))
                 {
-                    var parsed = JsonNode.Parse(trimmed);
-                    if (parsed is not null)
+                    try
                     {
-                        obj[key] = parsed;
-                        modified = true;
+                        var parsed = JsonNode.Parse(trimmed);
+                        if (parsed is not null)
+                        {
+                            obj[key] = parsed;
+                            modified = true;
+                            // If we just parsed an object, recurse into it
+                            if (parsed is JsonObject nestedObj)
+                                RepairObject(nestedObj);
+                            else if (parsed is JsonArray nestedArr)
+                                modified |= RepairArray(nestedArr);
+                        }
                     }
+                    catch (JsonException) { /* not valid JSON — leave as string */ }
                 }
-                catch (JsonException) { /* not valid JSON — leave as string */ }
+            }
+            else if (node is JsonObject childObj)
+            {
+                modified |= RepairObject(childObj);
+            }
+            else if (node is JsonArray childArr)
+            {
+                modified |= RepairArray(childArr);
             }
         }
+        return modified;
+    }
 
-        return modified ? obj.ToJsonString() : rawJson;
+    private static bool RepairArray(JsonArray arr)
+    {
+        var modified = false;
+        for (int i = 0; i < arr.Count; i++)
+        {
+            if (arr[i] is JsonObject elemObj)
+                modified |= RepairObject(elemObj);
+        }
+        return modified;
     }
 }

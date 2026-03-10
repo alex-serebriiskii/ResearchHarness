@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
@@ -8,7 +7,7 @@ namespace ResearchHarness.Infrastructure.Search;
 
 /// <summary>
 /// ISearchResultCache backed by IDistributedCache (e.g. Redis).
-/// Falls back gracefully: cache misses or deserialization failures return false
+/// Falls back gracefully: cache misses or deserialization failures return null
 /// without crashing the search pipeline.
 /// </summary>
 public sealed class DistributedSearchResultCache : ISearchResultCache
@@ -32,33 +31,25 @@ public sealed class DistributedSearchResultCache : ISearchResultCache
         };
     }
 
-    public bool TryGet(string query, [NotNullWhen(true)] out SearchResults? results)
+    public async ValueTask<SearchResults?> GetAsync(string query, CancellationToken ct = default)
     {
-        // IDistributedCache is synchronous-friendly via GetAsync but TryGet is sync.
-        // Use the synchronous Get overload to preserve the interface contract.
-        var bytes = _cache.Get(Key(query));
+        var bytes = await _cache.GetAsync(Key(query), ct);
         if (bytes is null)
-        {
-            results = null;
-            return false;
-        }
-
+            return null;
         try
         {
-            results = JsonSerializer.Deserialize<SearchResults>(bytes, JsonOpts);
-            return results is not null;
+            return JsonSerializer.Deserialize<SearchResults>(bytes, JsonOpts);
         }
         catch (JsonException)
         {
-            results = null;
-            return false;
+            return null;
         }
     }
 
-    public void Set(string query, SearchResults results)
+    public async ValueTask SetAsync(string query, SearchResults results, CancellationToken ct = default)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(results, JsonOpts);
-        _cache.Set(Key(query), bytes, _entryOptions);
+        await _cache.SetAsync(Key(query), bytes, _entryOptions, ct);
     }
 
     private static string Key(string query) => $"brave_search:{query.Trim().ToLowerInvariant()}";

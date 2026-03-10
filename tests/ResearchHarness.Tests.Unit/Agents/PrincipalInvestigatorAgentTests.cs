@@ -180,4 +180,39 @@ public class PrincipalInvestigatorAgentTests
         paper.Bibliography.Should().BeEmpty();
         paper.ExecutiveSummary.Should().NotBeNullOrEmpty();
     }
+
+    [Test]
+    public async Task ResearchTopicAsync_NullSynthesisFields_ProducesDefaults()
+    {
+        SetupTaskBreakdown(1);
+        SetupLabAgent();
+
+        var output = new PaperSynthesisOutput(null, 0.5);
+        _llm.CompleteAsync<PaperSynthesisOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<PaperSynthesisOutput>(output, new TokenUsage(10, 20), "tool_use"));
+
+        var paper = await _pi.ResearchTopicAsync(Topic, _config);
+
+        paper.ExecutiveSummary.Should().Be("");
+        paper.ConfidenceScore.Should().BeApproximately(0.5, 0.001);
+    }
+
+    [Test]
+    public async Task ResearchTopicAsync_NullTaskBreakdownFields_ProducesDefaults()
+    {
+        var breakdownOutput = new TaskBreakdownOutput([new SearchTaskDto("q", null, "e", "r")]);
+        _llm.CompleteAsync<TaskBreakdownOutput>(
+                Arg.Any<LlmRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new LlmResponse<TaskBreakdownOutput>(breakdownOutput, new TokenUsage(10, 20), "tool_use"));
+
+        SetupLabAgent();
+        SetupSynthesis();
+
+        var paper = await _pi.ResearchTopicAsync(Topic, _config);
+
+        paper.Should().NotBeNull();
+        await _labAgent.Received(1).ExecuteSearchTaskFullAsync(
+            Arg.Any<SearchTask>(), Arg.Any<JobConfiguration>(), Arg.Any<CancellationToken>());
+    }
 }

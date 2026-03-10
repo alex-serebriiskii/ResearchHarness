@@ -18,7 +18,7 @@ namespace ResearchHarness.Infrastructure.Llm;
 /// that function. This is the widest-supported path across the models
 /// available on OpenRouter.
 /// </summary>
-public sealed class OpenRouterLlmClient : ILlmClient
+public sealed partial class OpenRouterLlmClient : ILlmClient
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RateLimitedExecutor _rateLimiter;
@@ -102,9 +102,7 @@ public sealed class OpenRouterLlmClient : ILlmClient
             var response = await SendAsync(oaiRequest, ct);
 
             var usage = response.Usage ?? new OaiUsage(0, 0);
-            _logger.LogInformation(
-                "LLM call completed: {InputTokens} in, {OutputTokens} out, model {Model}",
-                usage.PromptTokens, usage.CompletionTokens, request.Model);
+            LogLlmCallCompleted(_logger, usage.PromptTokens, usage.CompletionTokens, request.Model);
 
             var tokenUsage = new TokenUsage(usage.PromptTokens, usage.CompletionTokens);
             var choice = response.Choices?.FirstOrDefault()
@@ -172,9 +170,7 @@ public sealed class OpenRouterLlmClient : ILlmClient
             var response = await SendAsync(oaiRequest, ct);
 
             var usage = response.Usage ?? new OaiUsage(0, 0);
-            _logger.LogInformation(
-                "LLM call completed: {InputTokens} in, {OutputTokens} out, model {Model}",
-                usage.PromptTokens, usage.CompletionTokens, request.Model);
+            LogLlmCallCompleted(_logger, usage.PromptTokens, usage.CompletionTokens, request.Model);
 
             var choice = response.Choices?.FirstOrDefault()
                 ?? throw new LlmException("OpenRouter returned a response with no choices.");
@@ -268,9 +264,7 @@ public sealed class OpenRouterLlmClient : ILlmClient
                     && httpResponse.Headers.RetryAfter is null
                     && _options.FallbackModels.TryGetValue(requestBody.Model, out var fallbackModel))
                 {
-                    _logger.LogWarning(
-                        "OpenRouter 429 for model {Model}; retrying with fallback model {Fallback}",
-                        requestBody.Model, fallbackModel);
+                    LogFallbackModel(_logger, requestBody.Model, fallbackModel);
                     currentModel = fallbackModel;
                     usedFallback = true;
                     continue; // immediate retry with fallback, no delay
@@ -279,9 +273,7 @@ public sealed class OpenRouterLlmClient : ILlmClient
                 var delaySeconds = statusCode == 429
                     ? GetRateLimitDelay(httpResponse.Headers.RetryAfter, attempt, _options.RateLimitRetryBaseDelaySeconds)
                     : Math.Min(Math.Pow(2, attempt), 30.0);
-                _logger.LogWarning(
-                    "OpenRouter API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})",
-                    statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
+                LogRetry(_logger, statusCode, delaySeconds, attempt + 1, _options.MaxRetries);
                 await Task.Delay(TimeSpan.FromSeconds(delaySeconds), requestCt);
                 continue;
             }
@@ -310,5 +302,14 @@ public sealed class OpenRouterLlmClient : ILlmClient
         var minimum = baseDelaySeconds * (attempt + 1);
         return Math.Min(Math.Max(serverDelay, minimum), 120.0);
     }
+
+    [LoggerMessage(3001, LogLevel.Information, "LLM call completed: {InputTokens} in, {OutputTokens} out, model {Model}")]
+    private static partial void LogLlmCallCompleted(ILogger logger, int inputTokens, int outputTokens, string model);
+
+    [LoggerMessage(3002, LogLevel.Warning, "OpenRouter 429 for model {Model}; retrying with fallback model {Fallback}")]
+    private static partial void LogFallbackModel(ILogger logger, string model, string fallback);
+
+    [LoggerMessage(3003, LogLevel.Warning, "OpenRouter API returned {StatusCode}, retrying in {Delay}s (attempt {Attempt}/{MaxRetries})")]
+    private static partial void LogRetry(ILogger logger, int statusCode, double delay, int attempt, int maxRetries);
 
 }

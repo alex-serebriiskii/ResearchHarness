@@ -16,13 +16,14 @@ namespace ResearchHarness.Orchestration;
 ///   4. Peer review + revision loop per paper
 ///   5. Assemble journal from accepted papers
 /// </summary>
-public class ResearchOrchestrator : IResearchOrchestrator
+public partial class ResearchOrchestrator : IResearchOrchestrator
 {
     private readonly IInstituteLeadAgent _lead;
     private readonly IPeerReviewService _peerReviewService;
     private readonly IConsultingFirmService _consultingFirmService;
     private readonly IServiceProvider _serviceProvider;
     private readonly IJobStore _jobStore;
+    private readonly ITokenTracker _tokenTracker;
     private readonly ChannelWriter<Guid> _queue;
     private readonly JobConfiguration _config;
     private readonly ILogger<ResearchOrchestrator> _logger;
@@ -36,6 +37,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
         IConsultingFirmService consultingFirmService,
         IServiceProvider serviceProvider,
         IJobStore jobStore,
+        ITokenTracker tokenTracker,
         ChannelWriter<Guid> queue,
         JobConfiguration config,
         ILogger<ResearchOrchestrator> logger)
@@ -45,6 +47,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
         _consultingFirmService = consultingFirmService;
         _serviceProvider = serviceProvider;
         _jobStore = jobStore;
+        _tokenTracker = tokenTracker;
         _queue = queue;
         _config = config;
         _logger = logger;
@@ -71,9 +74,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
         await _jobStore.SaveAsync(job, ct);
         await _queue.WriteAsync(job.JobId, ct);
 
-        _logger.LogInformation(
-            "Research job {JobId} created and enqueued for theme: {Theme}",
-            job.JobId, job.Theme);
+        LogJobCreated(_logger, job.JobId, job.Theme);
 
         return job.JobId;
     }
@@ -84,9 +85,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
         var job = await _jobStore.GetAsync(jobId, ct)
             ?? throw new InvalidOperationException($"Job {jobId} not found in store.");
 
-        _logger.LogInformation(
-            "Starting research pipeline for job {JobId}: \"{Theme}\"",
-            jobId, job.Theme);
+        LogPipelineStarted(_logger, jobId, job.Theme);
 
         using var activity = ActivitySource.StartActivity(
             "RunJob",
@@ -102,7 +101,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
             string? domainContext = null;
             if (job.Config.EnableConsultingFirm)
             {
-                _logger.LogInformation("Job {JobId}: requesting domain briefing", jobId);
+                LogDomainBriefingRequested(_logger, jobId);
                 domainContext = await _consultingFirmService.GetDomainBriefingAsync(
                     job.Theme, "general research uncertainty", ct);
                 job = job with { DomainContext = domainContext };
@@ -117,9 +116,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
             job = job with { Topics = topics, Status = JobStatus.Researching };
             await _jobStore.SaveAsync(job, ct);
 
-            _logger.LogInformation(
-                "Job {JobId}: decomposed into {TopicCount} topic(s)",
-                jobId, topics.Count);
+            LogThemeDecomposed(_logger, jobId, topics.Count);
 
             activity?.AddEvent(new ActivityEvent("ThemeDecomposed"));
 
@@ -129,9 +126,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
                 try
                 {
                     var pi = _serviceProvider.GetRequiredService<IPrincipalInvestigatorAgent>();
-                    _logger.LogInformation(
-                        "Job {JobId}: PI researching topic {TopicId} \"{Title}\"",
-                        jobId, topic.TopicId, topic.Title);
+                    LogTopicResearching(_logger, jobId, topic.TopicId, topic.Title);
 
                     var paper = await pi.ResearchTopicAsync(topic, job.Config, ct);
                     paper = await RunReviewCycleAsync(pi, topic, paper, job.Config, ct);
@@ -143,7 +138,7 @@ public class ResearchOrchestrator : IResearchOrchestrator
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Job {JobId}: topic {TopicId} failed", jobId, topic.TopicId);
+                    LogTopicFailed(_logger, ex, jobId, topic.TopicId);
                     return (Topic: topic, Paper: (Paper?)null, Success: false);
                 }
             });
@@ -179,36 +174,33 @@ public class ResearchOrchestrator : IResearchOrchestrator
                     "All topics failed during research. Cannot assemble journal.");
 
             // Step 4: Assemble journal
-            _logger.LogInformation(
-                "Job {JobId}: assembling journal from {PaperCount} paper(s)",
-                jobId, papers.Count);
+            LogAssemblingJournal(_logger, jobId, papers.Count);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Assembling, ct);
 
             var journal = await _lead.AssembleJournalAsync(job.Theme, papers, ct);
 
+            var costSummary = _tokenTracker.GetSummary();
             job = job with
             {
                 Status = JobStatus.Completed,
                 Result = journal,
-                CompletedAt = DateTimeOffset.UtcNow
+                CompletedAt = DateTimeOffset.UtcNow,
+                CostSummary = costSummary
             };
             await _jobStore.SaveAsync(job, ct);
 
-            _logger.LogInformation(
-                "Job {JobId} completed successfully in {Elapsed:F1}s",
-                jobId,
-                (job.CompletedAt!.Value - job.CreatedAt).TotalSeconds);
+            LogJobCompleted(_logger, jobId, (job.CompletedAt!.Value - job.CreatedAt).TotalSeconds);
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Job {JobId} was cancelled", jobId);
+            LogJobCancelled(_logger, jobId);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Failed, CancellationToken.None);
             throw;
         }
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            _logger.LogError(ex, "Job {JobId} failed", jobId);
+            LogJobFailed(_logger, ex, jobId);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Failed, CancellationToken.None);
             throw;
         }
@@ -259,4 +251,36 @@ public class ResearchOrchestrator : IResearchOrchestrator
         if (accepts * 2 > reviews.Count) return ReviewVerdict.Accept;
         return ReviewVerdict.Revise;
     }
+
+    // ── Structured log methods ────────────────────────────────────────────────
+
+    [LoggerMessage(1001, LogLevel.Information, "Research job {JobId} created and enqueued for theme: {Theme}")]
+    private static partial void LogJobCreated(ILogger logger, Guid jobId, string theme);
+
+    [LoggerMessage(1002, LogLevel.Information, "Starting research pipeline for job {JobId}: \"{Theme}\"")]
+    private static partial void LogPipelineStarted(ILogger logger, Guid jobId, string theme);
+
+    [LoggerMessage(1003, LogLevel.Information, "Job {JobId}: requesting domain briefing")]
+    private static partial void LogDomainBriefingRequested(ILogger logger, Guid jobId);
+
+    [LoggerMessage(1004, LogLevel.Information, "Job {JobId}: decomposed into {TopicCount} topic(s)")]
+    private static partial void LogThemeDecomposed(ILogger logger, Guid jobId, int topicCount);
+
+    [LoggerMessage(1005, LogLevel.Information, "Job {JobId}: PI researching topic {TopicId} \"{Title}\"")]
+    private static partial void LogTopicResearching(ILogger logger, Guid jobId, Guid topicId, string title);
+
+    [LoggerMessage(1006, LogLevel.Error, "Job {JobId}: topic {TopicId} failed")]
+    private static partial void LogTopicFailed(ILogger logger, Exception ex, Guid jobId, Guid topicId);
+
+    [LoggerMessage(1007, LogLevel.Information, "Job {JobId}: assembling journal from {PaperCount} paper(s)")]
+    private static partial void LogAssemblingJournal(ILogger logger, Guid jobId, int paperCount);
+
+    [LoggerMessage(1008, LogLevel.Information, "Job {JobId} completed successfully in {Elapsed:F1}s")]
+    private static partial void LogJobCompleted(ILogger logger, Guid jobId, double elapsed);
+
+    [LoggerMessage(1009, LogLevel.Warning, "Job {JobId} was cancelled")]
+    private static partial void LogJobCancelled(ILogger logger, Guid jobId);
+
+    [LoggerMessage(1010, LogLevel.Error, "Job {JobId} failed")]
+    private static partial void LogJobFailed(ILogger logger, Exception ex, Guid jobId);
 }
