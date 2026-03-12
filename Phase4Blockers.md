@@ -2,7 +2,7 @@
 
 Items from Phase 2 and Phase 3 that must be resolved before starting Phase 4 (Website Integration).
 
-**Status: 7 of 8 blockers resolved. 1 remains (model compat harness).**
+**Status: 8 of 8 blockers resolved. None remaining.**
 
 ---
 
@@ -20,8 +20,8 @@ Items from Phase 2 and Phase 3 that must be resolved before starting Phase 4 (We
 ### 4. ConsultingFirmService — ✅ RESOLVED (pre-existing)
 Fully implemented in `ConsultingFirmService.cs`, DI-registered, 4 unit tests, orchestrator integration tested. Gated by `EnableConsultingFirm=false` in appsettings — a config decision, not a code gap.
 
-### 5. Free-tier model compatibility test harness — ❌ REMAINING
-Not built. Requires real API keys and environment gating. Medium effort — deferred to pre-Phase 4 hardening.
+### 5. Free-tier model compatibility test harness — ✅ RESOLVED
+`ModelCompatibilityTests.cs` sends a minimal tool-use probe (math question with a 3-field JSON schema) to each candidate model via a real `OpenRouterLlmClient`. Parameterized via TUnit `[MethodDataSource]` over 6 candidate models. Asserts: non-null structured response, answer > 0, confidence in [0,1], non-empty reasoning, positive token usage. Gated behind `RUN_MODEL_COMPAT_TESTS=true` + `OPENROUTER_API_KEY` env vars — skips cleanly without them. 1 always-run validation test confirms harness configuration and schema well-formedness.
 
 ### 6. Integration tests — ✅ RESOLVED
 2 full pipeline integration tests added in `FullPipelineIntegrationTests.cs`: (1) submit job with mocked LLM/search, poll to completion, verify journal structure (papers, findings, bibliography, summaries); (2) same with peer review enabled, verifying review cycle runs and reviews appear in output. Uses `StubSearchProvider` and `StubPageFetcher` to prevent real HTTP calls.
@@ -40,9 +40,7 @@ Journal Viewer implemented at `/admin/journals` with three-column layout (job li
 
 ## Summary of Remaining Blockers
 
-| # | Blocker | Effort | Priority |
-|---|---------|--------|----------|
-| 5 | Model compatibility test harness | Medium | High — needed before switching models |
+All blockers resolved. Phase 4 is unblocked.
 
 
 ## Phase 4 — Scope (from design doc Section 13)
