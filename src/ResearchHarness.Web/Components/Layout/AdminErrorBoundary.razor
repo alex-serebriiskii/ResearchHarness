@@ -1,0 +1,26 @@
+@inherits Microsoft.AspNetCore.Components.Web.ErrorBoundary
+
+@if (CurrentException is not null)
+{
+    <section class="section">
+        <div class="container">
+            <article class="message is-danger">
+                <div class="message-header">
+                    <p>Something went wrong</p>
+                    <button class="delete" aria-label="dismiss" @onclick="Recover"></button>
+                </div>
+                <div class="message-body">
+                    <p>An unexpected error occurred. Click the dismiss button to try again.</p>
+                    @if (CurrentException.Message is { Length: > 0 } msg)
+                    {
+                        <pre class="mt-2 is-size-7">@msg</pre>
+                    }
+                </div>
+            </article>
+        </div>
+    </section>
+}
+else
+{
+    @ChildContent
+}

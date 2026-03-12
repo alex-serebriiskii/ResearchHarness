@@ -1,0 +1,461 @@
+@page "/admin/journals"
+
+@inject IJobStore JobStore
+@using ResearchHarness.Web.Rendering
+
+<div class="container is-fluid">
+    <h1 class="title">Journal Viewer</h1>
+
+    @if (_completedJobs is null)
+    {
+        <progress class="progress is-small is-primary" max="100">Loading...</progress>
+    }
+    else if (_completedJobs.Count == 0)
+    {
+        <div class="notification is-light">No completed research jobs yet.</div>
+    }
+    else
+    {
+        <div class="columns">
+            @* ── Left Sidebar: Completed Jobs ─────────────────────────────── *@
+            <div class="column is-3">
+                <div class="box admin-sidebar">
+                    <div class="field">
+                        <div class="control has-icons-left">
+                            <input class="input is-small" type="text" placeholder="Filter by theme..."
+                                   @bind="_filterText" @bind:event="oninput" />
+                            <span class="icon is-small is-left">
+                                <i class="fas fa-search"></i>
+                            </span>
+                        </div>
+                    </div>
+                    <aside class="menu">
+                        <ul class="menu-list">
+                            @foreach (var job in FilteredJobs)
+                            {
+                                <li>
+                                    <a class="@(job.JobId == _selectedJobId ? "is-active" : "")"
+                                       @onclick="() => SelectJobAsync(job.JobId)">
+                                        <div>
+                                            <strong>@Truncate(job.Theme, 40)</strong>
+                                        </div>
+                                        <div class="is-size-7 has-text-grey">
+                                            @job.CompletedAt?.LocalDateTime.ToString("g")
+                                            <span class="tag is-small is-rounded ml-1">
+                                                @(job.Result?.Papers.Count ?? 0) papers
+                                            </span>
+                                        </div>
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </aside>
+                </div>
+            </div>
+
+            @* ── Main Area: Journal Detail ────────────────────────────────── *@
+            <div class="column is-6">
+                @if (_loadingDetail)
+                {
+                    <progress class="progress is-small is-primary" max="100">Loading...</progress>
+                }
+                else if (_selectedJob is null)
+                {
+                    <div class="notification is-light">Select a completed job to view its journal.</div>
+                }
+                else if (_selectedJob.Result is null)
+                {
+                    <div class="notification is-warning">This job has no journal data.</div>
+                }
+                else
+                {
+                    var journal = _selectedJob.Result;
+
+                    <div class="box">
+                        <h2 class="subtitle is-4">@_selectedJob.Theme</h2>
+
+                        <div class="content">
+                            <h4>Overall Summary</h4>
+                            @(MarkdownRenderer.ToHtml(journal.OverallSummary))
+
+                            @if (!string.IsNullOrWhiteSpace(journal.CrossTopicAnalysis))
+                            {
+                                <h4>Cross-Topic Analysis</h4>
+                                @(MarkdownRenderer.ToHtml(journal.CrossTopicAnalysis))
+                            }
+                        </div>
+                    </div>
+
+                    @* Papers *@
+                    @foreach (var paper in journal.Papers)
+                    {
+                        var topicTitle = GetTopicTitle(paper.TopicId);
+                        var isExpanded = _expandedPapers.Contains(paper.TopicId);
+
+                        <div class="card mb-4">
+                            <header class="card-header is-clickable" @onclick="() => TogglePaper(paper.TopicId)">
+                                <p class="card-header-title">
+                                    @topicTitle
+                                    <span class="tag is-rounded ml-2 @ConfidenceColor(paper.ConfidenceScore)">
+                                        @paper.ConfidenceScore.ToString("P0")
+                                    </span>
+                                    @if (paper.RevisionCount > 0)
+                                    {
+                                        <span class="tag is-rounded is-light ml-1 has-text-black">
+                                            @paper.RevisionCount revision@(paper.RevisionCount != 1 ? "s" : "")
+                                        </span>
+                                    }
+                                </p>
+                                <button class="card-header-icon" aria-label="expand">
+                                    <span class="icon">
+                                        @(isExpanded ? "\u25B2" : "\u25BC")
+                                    </span>
+                                </button>
+                            </header>
+
+                            <div class="card-content">
+                                @if (!isExpanded)
+                                {
+                                    <p>@Truncate(paper.ExecutiveSummary, 200)</p>
+                                }
+                                else
+                                {
+                                    <div class="content">
+                                        <h5>Executive Summary</h5>
+                                        @(MarkdownRenderer.ToHtml(paper.ExecutiveSummary))
+
+                                        @* Findings *@
+                                        @if (paper.Findings.Count > 0)
+                                        {
+                                            <h5 class="is-clickable" @onclick="() => ToggleFindings(paper.TopicId)" style="user-select: none;">
+                                                Findings (@paper.Findings.Count)
+                                                <span class="icon is-small ml-1">
+                                                    @(_collapsedFindings.Contains(paper.TopicId) ? "\u25BC" : "\u25B2")
+                                                </span>
+                                            </h5>
+                                            @if (!_collapsedFindings.Contains(paper.TopicId))
+                                            {
+                                                @foreach (var finding in paper.Findings)
+                                                {
+                                                    <div class="box">
+                                                        <h6>
+                                                            @finding.SubTopic
+                                                            <span class="tag is-small is-rounded @RelevanceColor(finding.RelevanceScore) ml-1">
+                                                                @finding.RelevanceScore.ToString("F2")
+                                                            </span>
+                                                        </h6>
+                                                        @(MarkdownRenderer.ToHtml(finding.Summary))
+                                                        @if (finding.KeyPoints.Count > 0)
+                                                        {
+                                                            <ul>
+                                                                @foreach (var kp in finding.KeyPoints)
+                                                                {
+                                                                    <li>@kp</li>
+                                                                }
+                                                            </ul>
+                                                        }
+                                                    </div>
+                                                }
+                                            }
+                                        }
+
+                                        @* Bibliography *@
+                                        @if (paper.Bibliography.Count > 0)
+                                        {
+                                            <h5>Bibliography</h5>
+                                            <table class="table is-narrow is-fullwidth is-size-7">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Title</th>
+                                                        <th>Author</th>
+                                                        <th>Credibility</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var src in paper.Bibliography)
+                                                    {
+                                                        <tr>
+                                                            <td><a href="@src.Url" target="_blank" rel="noopener">@src.Title</a></td>
+                                                            <td>@(src.Author ?? "Unknown")</td>
+                                                            <td><span class="tag is-small @CredibilityColor(src.Credibility)">@src.Credibility</span></td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        }
+
+                                        @* Reviews *@
+                                        @if (paper.Reviews.Count > 0)
+                                        {
+                                            <h5>Reviews</h5>
+                                            @foreach (var review in paper.Reviews)
+                                            {
+                                                <div class="mb-3">
+                                                    <span class="tag @VerdictColor(review.Verdict) mr-2">@review.Verdict</span>
+                                                    <span class="is-size-7 has-text-grey">@review.ReviewedAt.LocalDateTime.ToString("g")</span>
+                                                    <div class="mt-1">@(MarkdownRenderer.ToHtml(review.Feedback))</div>
+                                                    @if (review.Issues.Count > 0)
+                                                    {
+                                                        <ul class="is-size-7">
+                                                            @foreach (var issue in review.Issues)
+                                                            {
+                                                                <li>@issue</li>
+                                                            }
+                                                        </ul>
+                                                    }
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+
+            @* ── Right Summary Pane ───────────────────────────────────────── *@
+            <div class="column is-3">
+                @if (_selectedJob is not null)
+                {
+                    <div class="box admin-summary">
+                        <h3 class="subtitle is-5">Run Metrics</h3>
+
+                        @* Duration *@
+                        <div class="mb-4">
+                            <p class="heading">Duration</p>
+                            <p class="title is-6">@FormatDuration(_selectedJob)</p>
+                        </div>
+
+                        @* Cost *@
+                        @if (_selectedJob.CostSummary is { } cost)
+                        {
+                            <div class="mb-4">
+                                <p class="heading">Cost</p>
+                                <table class="table is-narrow is-fullwidth cost-table">
+                                    <tr><td>Input Tokens</td><td class="has-text-right">@cost.TotalInputTokens.ToString("N0")</td></tr>
+                                    <tr><td>Output Tokens</td><td class="has-text-right">@cost.TotalOutputTokens.ToString("N0")</td></tr>
+                                    <tr><td>LLM Calls</td><td class="has-text-right">@cost.TotalLlmCalls.ToString("N0")</td></tr>
+                                </table>
+                            </div>
+
+                            @if (cost.ByModel.Count > 0)
+                            {
+                                <div class="mb-4">
+                                    <p class="heading">Per-Model Breakdown</p>
+                                    <table class="table is-narrow is-fullwidth cost-table">
+                                        <thead>
+                                            <tr><th>Model</th><th class="has-text-right">In</th><th class="has-text-right">Out</th><th class="has-text-right">#</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var (name, usage) in cost.ByModel)
+                                            {
+                                                <tr>
+                                                    <td class="is-size-7">@name</td>
+                                                    <td class="has-text-right is-size-7">@usage.InputTokens.ToString("N0")</td>
+                                                    <td class="has-text-right is-size-7">@usage.OutputTokens.ToString("N0")</td>
+                                                    <td class="has-text-right is-size-7">@usage.Calls</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        }
+
+                        @* Pipeline Stats *@
+                        @{
+                            var metrics = ComputeMetrics(_selectedJob);
+                        }
+
+                        <div class="mb-4">
+                            <p class="heading">Pipeline</p>
+                            <table class="table is-narrow is-fullwidth cost-table">
+                                <tr><td>Topics (total)</td><td class="has-text-right">@metrics.TotalTopics</td></tr>
+                                <tr><td>Completed</td><td class="has-text-right">@metrics.CompletedTopics</td></tr>
+                                <tr><td>Failed</td><td class="has-text-right">@metrics.FailedTopics</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="mb-4">
+                            <p class="heading">Papers</p>
+                            <table class="table is-narrow is-fullwidth cost-table">
+                                <tr><td>Produced</td><td class="has-text-right">@metrics.PaperCount</td></tr>
+                                <tr><td>Avg Confidence</td><td class="has-text-right">@metrics.AvgConfidence.ToString("P0")</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="mb-4">
+                            <p class="heading">Revisions</p>
+                            <table class="table is-narrow is-fullwidth cost-table">
+                                <tr><td>Total</td><td class="has-text-right">@metrics.TotalRevisions</td></tr>
+                                <tr><td>Avg/Paper</td><td class="has-text-right">@metrics.AvgRevisionsPerPaper.ToString("F1")</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="mb-4">
+                            <p class="heading">Reviews</p>
+                            <table class="table is-narrow is-fullwidth cost-table">
+                                <tr><td>Total</td><td class="has-text-right">@metrics.TotalReviews</td></tr>
+                                <tr><td>Accept</td><td class="has-text-right has-text-success">@metrics.AcceptCount</td></tr>
+                                <tr><td>Revise</td><td class="has-text-right has-text-warning">@metrics.ReviseCount</td></tr>
+                                <tr><td>Reject</td><td class="has-text-right has-text-danger">@metrics.RejectCount</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="mb-4">
+                            <p class="heading">Sources</p>
+                            <table class="table is-narrow is-fullwidth cost-table">
+                                <tr><td>Total Unique</td><td class="has-text-right">@metrics.UniqueSourceCount</td></tr>
+                                <tr><td>High</td><td class="has-text-right">@metrics.CredibilityHigh</td></tr>
+                                <tr><td>Medium</td><td class="has-text-right">@metrics.CredibilityMedium</td></tr>
+                                <tr><td>Low</td><td class="has-text-right">@metrics.CredibilityLow</td></tr>
+                                <tr><td>Unknown</td><td class="has-text-right">@metrics.CredibilityUnknown</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<ResearchJob>? _completedJobs;
+    private string _filterText = "";
+    private Guid? _selectedJobId;
+    private ResearchJob? _selectedJob;
+    private bool _loadingDetail;
+    private readonly HashSet<Guid> _expandedPapers = [];
+    private readonly HashSet<Guid> _collapsedFindings = [];
+
+    private IEnumerable<ResearchJob> FilteredJobs =>
+        string.IsNullOrWhiteSpace(_filterText)
+            ? _completedJobs ?? []
+            : (_completedJobs ?? []).Where(j =>
+                j.Theme.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var (jobs, _) = await JobStore.ListJobsAsync(offset: 0, limit: 100, status: JobStatus.Completed);
+        _completedJobs = jobs.OrderByDescending(j => j.CompletedAt).ToList();
+    }
+
+    private async Task SelectJobAsync(Guid jobId)
+    {
+        if (_selectedJobId == jobId) return;
+
+        _selectedJobId = jobId;
+        _loadingDetail = true;
+        _expandedPapers.Clear();
+
+        try
+        {
+            _selectedJob = await JobStore.GetAsync(jobId);
+        }
+        finally
+        {
+            _loadingDetail = false;
+        }
+    }
+
+    private void TogglePaper(Guid topicId)
+    {
+        if (!_expandedPapers.Remove(topicId))
+            _expandedPapers.Add(topicId);
+    }
+
+    private void ToggleFindings(Guid topicId)
+    {
+        if (!_collapsedFindings.Remove(topicId))
+            _collapsedFindings.Add(topicId);
+    }
+
+    private string GetTopicTitle(Guid topicId)
+    {
+        var topic = _selectedJob?.Topics.FirstOrDefault(t => t.TopicId == topicId);
+        return topic?.Title ?? $"Topic {topicId:N8}...";
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────
+
+    private static string Truncate(string s, int max)
+        => s.Length > max ? string.Concat(s.AsSpan(0, max), "...") : s;
+
+    private static string FormatDuration(ResearchJob job)
+    {
+        if (job.CompletedAt is null) return "N/A";
+        var span = job.CompletedAt.Value - job.CreatedAt;
+        return span.TotalHours >= 1
+            ? $"{span.TotalHours:F1}h"
+            : span.TotalMinutes >= 1
+                ? $"{span.TotalMinutes:F0}m"
+                : $"{span.TotalSeconds:F0}s";
+    }
+
+    private static string ConfidenceColor(double score) => score switch
+    {
+        >= 0.8 => "is-success",
+        >= 0.5 => "is-warning",
+        _ => "is-danger"
+    };
+
+    private static string RelevanceColor(double score) => score switch
+    {
+        0 => "is-danger has-text-black",
+        >= 0.8 => "is-success",
+        >= 0.5 => "is-info",
+        _ => "is-light"
+    };
+
+    private static string CredibilityColor(SourceCredibility cred) => cred switch
+    {
+        SourceCredibility.High => "is-success",
+        SourceCredibility.Medium => "is-info",
+        SourceCredibility.Low => "is-warning",
+        SourceCredibility.Unknown => "is-dark",
+        _ => "is-light"
+    };
+
+    private static string VerdictColor(ReviewVerdict verdict) => verdict switch
+    {
+        ReviewVerdict.Accept => "is-success",
+        ReviewVerdict.Revise => "is-warning",
+        ReviewVerdict.Reject => "is-danger",
+        _ => "is-light"
+    };
+
+    private record JournalMetrics(
+        int TotalTopics, int CompletedTopics, int FailedTopics,
+        int PaperCount, double AvgConfidence,
+        int TotalRevisions, double AvgRevisionsPerPaper,
+        int TotalReviews, int AcceptCount, int ReviseCount, int RejectCount,
+        int UniqueSourceCount,
+        int CredibilityHigh, int CredibilityMedium, int CredibilityLow, int CredibilityUnknown);
+
+    private static JournalMetrics ComputeMetrics(ResearchJob job)
+    {
+        var topics = job.Topics;
+        var papers = job.Result?.Papers ?? [];
+        var allReviews = papers.SelectMany(p => p.Reviews).ToList();
+        var allSources = job.Result?.MasterBibliography ?? [];
+
+        return new JournalMetrics(
+            TotalTopics: topics.Count,
+            CompletedTopics: topics.Count(t => t.Status == TopicStatus.Completed),
+            FailedTopics: topics.Count(t => t.Status == TopicStatus.Failed),
+            PaperCount: papers.Count,
+            AvgConfidence: papers.Count > 0 ? papers.Average(p => p.ConfidenceScore) : 0,
+            TotalRevisions: papers.Sum(p => p.RevisionCount),
+            AvgRevisionsPerPaper: papers.Count > 0 ? papers.Average(p => (double)p.RevisionCount) : 0,
+            TotalReviews: allReviews.Count,
+            AcceptCount: allReviews.Count(r => r.Verdict == ReviewVerdict.Accept),
+            ReviseCount: allReviews.Count(r => r.Verdict == ReviewVerdict.Revise),
+            RejectCount: allReviews.Count(r => r.Verdict == ReviewVerdict.Reject),
+            UniqueSourceCount: allSources.Count,
+            CredibilityHigh: allSources.Count(s => s.Credibility == SourceCredibility.High),
+            CredibilityMedium: allSources.Count(s => s.Credibility == SourceCredibility.Medium),
+            CredibilityLow: allSources.Count(s => s.Credibility == SourceCredibility.Low),
+            CredibilityUnknown: allSources.Count(s => s.Credibility == SourceCredibility.Unknown));
+    }
+}

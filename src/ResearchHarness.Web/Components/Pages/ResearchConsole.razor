@@ -1,0 +1,335 @@
+@page "/admin"
+@implements IDisposable
+
+@inject IResearchOrchestrator Orchestrator
+@inject IJobStore JobStore
+@inject IJobCancellationService CancellationService
+@inject JobProgressBroadcaster Broadcaster
+
+<div class="container is-fluid">
+    <h1 class="title">Research Console</h1>
+
+    @* ── Prompt Input ─────────────────────────────────────────────────── *@
+    <div class="box">
+        <div class="field">
+            <label class="label">Research Theme</label>
+            <div class="control">
+                <textarea class="textarea" placeholder="Enter a research theme..."
+                          value="@_theme" @oninput="OnThemeInput" rows="3"></textarea>
+            </div>
+        </div>
+        <div class="field">
+            <div class="control">
+                <button class="button is-primary @(_isSubmitting ? "is-loading" : "")"
+                        disabled="@(string.IsNullOrWhiteSpace(_theme) || _isSubmitting)"
+                        @onclick="SubmitAsync">
+                    Start Research
+                </button>
+            </div>
+            @if (_submitError is not null)
+            {
+                <p class="help is-danger mt-2">@_submitError</p>
+            }
+        </div>
+    </div>
+
+    @* ── Active / Recent Jobs Table ──────────────────────────────────── *@
+    <h2 class="subtitle">Jobs</h2>
+
+    @if (_jobs is null)
+    {
+        <progress class="progress is-small is-primary" max="100">Loading...</progress>
+    }
+    else if (_jobs.Count == 0)
+    {
+        <div class="notification is-light">No jobs found. Submit a research theme above.</div>
+    }
+    else
+    {
+        <div class="table-container">
+            <table class="table is-striped is-hoverable is-fullwidth">
+                <thead>
+                    <tr>
+                        <th>Theme</th>
+                        <th>Status</th>
+                        <th>Topics</th>
+                        <th>Created</th>
+                        <th>Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in _jobs)
+                    {
+                        <tr class="is-clickable @(job.JobId == _selectedJobId ? "is-selected" : "")"
+                            @onclick="() => SelectJob(job.JobId)">
+                            <td>@Truncate(job.Theme, 80)</td>
+                            <td><span class="tag @StatusColor(job.Status)">@job.Status</span></td>
+                            <td>@CompletedTopicCount(job) / @job.Topics.Count</td>
+                            <td>@job.CreatedAt.LocalDateTime.ToString("g")</td>
+                            <td>@FormatDuration(job)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @* ── Selected Job Detail ─────────────────────────────────────────── *@
+    @if (_selectedJobId is not null)
+    {
+        <div class="columns mt-4">
+            @* Timeline *@
+            <div class="column is-6">
+                <div class="box">
+                    <h3 class="subtitle is-5">Progress Timeline</h3>
+                    @if (_selectedEvents.Count == 0)
+                    {
+                        <p class="has-text-grey">No events yet.</p>
+                    }
+                    else
+                    {
+                        <div class="admin-timeline">
+                            @foreach (var evt in _selectedEvents)
+                            {
+                                <div class="timeline-item @TimelineItemClass(evt)">
+                                    <span class="tag is-small @StatusColor(evt.Status) mr-2">@evt.Status</span>
+                                    <span>@evt.Message</span>
+                                    <span class="has-text-grey is-size-7 ml-2">@evt.Timestamp.LocalDateTime.ToString("T")</span>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (_selectedJob is not null && IsActive(_selectedJob.Status))
+                    {
+                        <div class="mt-3">
+                            <button class="button is-danger is-outlined is-small"
+                                    @onclick="CancelSelected">
+                                Cancel Job
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            @* Cost Display *@
+            <div class="column is-6">
+                <div class="box">
+                    <h3 class="subtitle is-5">Cost Summary</h3>
+                    @{
+                        var cost = GetLatestCost();
+                    }
+                    @if (cost is null)
+                    {
+                        <p class="has-text-grey">No cost data yet.</p>
+                    }
+                    else
+                    {
+                        <div class="columns is-multiline">
+                            <div class="column is-4">
+                                <div class="has-text-centered">
+                                    <p class="heading">Input Tokens</p>
+                                    <p class="title is-5">@cost.TotalInputTokens.ToString("N0")</p>
+                                </div>
+                            </div>
+                            <div class="column is-4">
+                                <div class="has-text-centered">
+                                    <p class="heading">Output Tokens</p>
+                                    <p class="title is-5">@cost.TotalOutputTokens.ToString("N0")</p>
+                                </div>
+                            </div>
+                            <div class="column is-4">
+                                <div class="has-text-centered">
+                                    <p class="heading">LLM Calls</p>
+                                    <p class="title is-5">@cost.TotalLlmCalls.ToString("N0")</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (cost.ByModel.Count > 0)
+                        {
+                            <table class="table is-narrow is-fullwidth cost-table mt-3">
+                                <thead>
+                                    <tr>
+                                        <th>Model</th>
+                                        <th class="has-text-right">Input</th>
+                                        <th class="has-text-right">Output</th>
+                                        <th class="has-text-right">Calls</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var (name, usage) in cost.ByModel)
+                                    {
+                                        <tr>
+                                            <td>@name</td>
+                                            <td class="has-text-right">@usage.InputTokens.ToString("N0")</td>
+                                            <td class="has-text-right">@usage.OutputTokens.ToString("N0")</td>
+                                            <td class="has-text-right">@usage.Calls</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string _theme = "";
+    private bool _isSubmitting;
+    private string? _submitError;
+    private List<ResearchJob>? _jobs;
+    private Guid? _selectedJobId;
+    private ResearchJob? _selectedJob;
+    private List<JobProgressEvent> _selectedEvents = [];
+
+    private void OnThemeInput(ChangeEventArgs e) => _theme = e.Value?.ToString() ?? "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadJobsAsync();
+        Broadcaster.OnProgress += HandleProgress;
+    }
+
+    private async Task LoadJobsAsync()
+    {
+        var (jobs, _) = await JobStore.ListJobsAsync(offset: 0, limit: 50);
+        _jobs = jobs.OrderByDescending(j => j.CreatedAt).ToList();
+
+        // Refresh selected job if present
+        if (_selectedJobId is not null)
+        {
+            _selectedJob = _jobs.FirstOrDefault(j => j.JobId == _selectedJobId);
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_theme)) return;
+
+        _isSubmitting = true;
+        _submitError = null;
+
+        try
+        {
+            var jobId = await Orchestrator.StartResearchAsync(_theme);
+            _theme = "";
+            await LoadJobsAsync();
+            SelectJob(jobId);
+        }
+        catch (Exception ex)
+        {
+            _submitError = ex.Message;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void SelectJob(Guid jobId)
+    {
+        _selectedJobId = jobId;
+        _selectedJob = _jobs?.FirstOrDefault(j => j.JobId == jobId);
+        // Load history from broadcaster for late-joining
+        _selectedEvents = Broadcaster.GetHistory(jobId).ToList();
+    }
+
+    private void CancelSelected()
+    {
+        if (_selectedJobId is not null)
+        {
+            CancellationService.CancelJob(_selectedJobId.Value);
+        }
+    }
+
+    private async void HandleProgress(JobProgressEvent evt)
+    {
+        await InvokeAsync(() =>
+        {
+            // Update events for selected job
+            if (evt.JobId == _selectedJobId)
+            {
+                _selectedEvents.Add(evt);
+            }
+
+            // Refresh the job in the list
+            if (_jobs is not null)
+            {
+                var idx = _jobs.FindIndex(j => j.JobId == evt.JobId);
+                if (idx >= 0)
+                {
+                    var existing = _jobs[idx];
+                    _jobs[idx] = existing with { Status = evt.Status };
+
+                    if (evt.JobId == _selectedJobId)
+                    {
+                        _selectedJob = _jobs[idx];
+                    }
+                }
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Broadcaster.OnProgress -= HandleProgress;
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────
+
+    private static string Truncate(string s, int max)
+        => s.Length > max ? string.Concat(s.AsSpan(0, max), "...") : s;
+
+    private static int CompletedTopicCount(ResearchJob job)
+        => job.Topics.Count(t => t.Status is TopicStatus.Completed or TopicStatus.Failed);
+
+    private static string FormatDuration(ResearchJob job)
+    {
+        var end = job.CompletedAt ?? DateTimeOffset.UtcNow;
+        var span = end - job.CreatedAt;
+        return span.TotalHours >= 1
+            ? $"{span.TotalHours:F1}h"
+            : span.TotalMinutes >= 1
+                ? $"{span.TotalMinutes:F0}m"
+                : $"{span.TotalSeconds:F0}s";
+    }
+
+    private static bool IsActive(JobStatus status)
+        => status is not (JobStatus.Completed or JobStatus.Failed);
+
+    private static string StatusColor(JobStatus status) => status switch
+    {
+        JobStatus.Pending => "is-light",
+        JobStatus.Decomposing => "is-info",
+        JobStatus.Consulting => "is-info",
+        JobStatus.Researching => "is-warning",
+        JobStatus.Reviewing => "is-link",
+        JobStatus.Assembling => "is-primary",
+        JobStatus.Completed => "is-success",
+        JobStatus.Failed => "is-danger",
+        _ => "is-light"
+    };
+
+    private static string TimelineItemClass(JobProgressEvent evt) => evt.Status switch
+    {
+        JobStatus.Completed => "is-completed",
+        JobStatus.Failed => "is-failed",
+        _ => ""
+    };
+
+    private JobCostSummary? GetLatestCost()
+    {
+        // From events (live), or from the stored job
+        var fromEvents = _selectedEvents
+            .LastOrDefault(e => e.CostSnapshot is not null)?.CostSnapshot;
+        if (fromEvents is not null) return fromEvents;
+
+        return _selectedJob?.CostSummary;
+    }
+}

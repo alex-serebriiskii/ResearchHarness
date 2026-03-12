@@ -1,0 +1,39 @@
+@inherits LayoutComponentBase
+
+<nav class="navbar is-dark" role="navigation" aria-label="main navigation">
+    <div class="navbar-brand">
+        <a class="navbar-item has-text-weight-bold" href="/admin">
+            Research Harness Admin
+        </a>
+    </div>
+    <div class="navbar-menu is-active">
+        <div class="navbar-start">
+            <a class="navbar-item @(IsActive("/admin"))" href="/admin">
+                Research Console
+            </a>
+            <a class="navbar-item @(IsActive("/admin/journals"))" href="/admin/journals">
+                Journal Viewer
+            </a>
+        </div>
+    </div>
+</nav>
+
+<section class="section">
+    <AdminErrorBoundary>
+        @Body
+    </AdminErrorBoundary>
+</section>
+
+@code {
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    private string IsActive(string path)
+    {
+        var uri = Nav.ToBaseRelativePath(Nav.Uri);
+        var normalizedPath = path.TrimStart('/');
+        // Exact match for tabs
+        return string.Equals(uri.TrimEnd('/'), normalizedPath.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)
+            ? "is-active"
+            : "";
+    }
+}

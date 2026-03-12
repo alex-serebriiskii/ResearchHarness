@@ -81,7 +81,7 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         // Step 3: Synthesize findings into a paper
         var synthesisRequest = new LlmRequest(
             Model: config.PIModel,
-            SystemPrompt: "You are a Principal Investigator synthesizing research findings into a structured paper. Be precise, evidence-based, and academically rigorous.",
+            SystemPrompt: "You are a Principal Investigator synthesizing research findings into a structured paper. Be precise, evidence-based, and academically rigorous. Format the executive summary using markdown: lead with a concise thesis, use bullet points for key findings, and **bold** for critical terms.",
             Messages: [LlmMessage.User(BuildSynthesisMessage(topic, allFindings, sourceMap.Values))],
             OutputSchema: BuildSynthesisSchema()
         );
@@ -117,7 +117,7 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         var revisionRequest = new LlmRequest(
             Model: config.PIModel,
             SystemPrompt: "You are a Principal Investigator revising a research paper based on peer reviewer feedback. " +
-                          "Improve the paper while maintaining factual accuracy and evidence-based conclusions.",
+                          "Improve the paper while maintaining factual accuracy and evidence-based conclusions. Maintain markdown formatting in the revised executive summary.",
             Messages: [LlmMessage.User(BuildRevisionMessage(topic, currentPaper, reviews))],
             OutputSchema: BuildSynthesisSchema()
         );

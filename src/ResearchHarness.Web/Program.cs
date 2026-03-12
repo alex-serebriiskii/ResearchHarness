@@ -17,6 +17,7 @@ using ResearchHarness.Infrastructure.Tracking;
 using ResearchHarness.Infrastructure.Telemetry;
 using ResearchHarness.Orchestration;
 using ResearchHarness.Web;
+using ResearchHarness.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -219,6 +220,9 @@ builder.Services.AddScoped<IResearchOrchestrator, ResearchOrchestrator>();
 builder.Services.AddHostedService<ResearchJobProcessor>();
 
 builder.Services.AddSingleton<IJobCancellationService, JobCancellationService>();
+builder.Services.AddSingleton<JobProgressBroadcaster>();
+builder.Services.AddSingleton<IJobProgressNotifier>(sp =>
+    sp.GetRequiredService<JobProgressBroadcaster>());
 builder.Services.Configure<ResearchScheduleOptions>(
     builder.Configuration.GetSection("Research"));
 builder.Services.AddHostedService<ScheduledResearchService>();
@@ -261,12 +265,18 @@ builder.Services.AddOpenApi(options =>
 builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents();
 // ── Build ──────────────────────────────────────────────────────────────────
 
 var app = builder.Build();
 
 // Phase 1 API key guard for /internal/ routes.
 app.UseMiddleware<ApiKeyMiddleware>();
+
+app.UseStaticFiles();
+app.MapStaticAssets();
+app.UseAntiforgery();
 
 app.UseRateLimiter();
 
@@ -284,4 +294,6 @@ if (!app.Environment.IsProduction())
 
 app.MapControllers();
 
+app.MapRazorComponents<ResearchHarness.Web.Components.App>()
+    .AddInteractiveServerRenderMode();
 app.Run();

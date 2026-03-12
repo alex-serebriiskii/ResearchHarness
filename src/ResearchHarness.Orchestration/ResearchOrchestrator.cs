@@ -24,6 +24,7 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
     private readonly IServiceProvider _serviceProvider;
     private readonly IJobStore _jobStore;
     private readonly ITokenTracker _tokenTracker;
+    private readonly IJobProgressNotifier _notifier;
     private readonly ChannelWriter<Guid> _queue;
     private readonly JobConfiguration _config;
     private readonly ILogger<ResearchOrchestrator> _logger;
@@ -38,6 +39,7 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
         IServiceProvider serviceProvider,
         IJobStore jobStore,
         ITokenTracker tokenTracker,
+        IJobProgressNotifier notifier,
         ChannelWriter<Guid> queue,
         JobConfiguration config,
         ILogger<ResearchOrchestrator> logger)
@@ -48,6 +50,7 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
         _serviceProvider = serviceProvider;
         _jobStore = jobStore;
         _tokenTracker = tokenTracker;
+        _notifier = notifier;
         _queue = queue;
         _config = config;
         _logger = logger;
@@ -73,6 +76,9 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
 
         await _jobStore.SaveAsync(job, ct);
         await _queue.WriteAsync(job.JobId, ct);
+
+        await _notifier.NotifyAsync(new JobProgressEvent(
+            job.JobId, JobStatus.Pending, "Job created", 0, 0, null, DateTimeOffset.UtcNow), ct);
 
         LogJobCreated(_logger, job.JobId, job.Theme);
 
@@ -106,6 +112,9 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
                     job.Theme, "general research uncertainty", ct);
                 job = job with { DomainContext = domainContext };
                 await _jobStore.SaveAsync(job, ct);
+                await _notifier.NotifyAsync(new JobProgressEvent(
+                    jobId, JobStatus.Consulting, "Domain briefing complete",
+                    0, 0, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), ct);
             }
 
             activity?.AddEvent(new ActivityEvent("ConsultingBriefingComplete"));
@@ -116,11 +125,16 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
             job = job with { Topics = topics, Status = JobStatus.Researching };
             await _jobStore.SaveAsync(job, ct);
 
+            await _notifier.NotifyAsync(new JobProgressEvent(
+                jobId, JobStatus.Researching, $"Decomposed into {topics.Count} topics",
+                0, topics.Count, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), ct);
+
             LogThemeDecomposed(_logger, jobId, topics.Count);
 
             activity?.AddEvent(new ActivityEvent("ThemeDecomposed"));
 
             // Step 3: Research each topic in parallel, then peer review each paper
+            var completedCount = 0;
             var piTasks = topics.Select(async topic =>
             {
                 try
@@ -130,6 +144,12 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
 
                     var paper = await pi.ResearchTopicAsync(topic, job.Config, ct);
                     paper = await RunReviewCycleAsync(pi, topic, paper, job.Config, ct);
+
+                    var done = Interlocked.Increment(ref completedCount);
+                    await _notifier.NotifyAsync(new JobProgressEvent(
+                        jobId, JobStatus.Researching, $"Topic '{topic.Title}' complete ({done}/{topics.Count})",
+                        done, topics.Count, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), ct);
+
                     return (Topic: topic, Paper: (Paper?)paper, Success: true);
                 }
                 catch (OperationCanceledException)
@@ -139,6 +159,12 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
                 catch (Exception ex)
                 {
                     LogTopicFailed(_logger, ex, jobId, topic.TopicId);
+
+                    var done = Interlocked.Increment(ref completedCount);
+                    await _notifier.NotifyAsync(new JobProgressEvent(
+                        jobId, JobStatus.Researching, $"Topic '{topic.Title}' failed ({done}/{topics.Count})",
+                        done, topics.Count, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), ct);
+
                     return (Topic: topic, Paper: (Paper?)null, Success: false);
                 }
             });
@@ -177,6 +203,10 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
             LogAssemblingJournal(_logger, jobId, papers.Count);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Assembling, ct);
 
+            await _notifier.NotifyAsync(new JobProgressEvent(
+                jobId, JobStatus.Assembling, $"Assembling journal from {papers.Count} papers",
+                completedCount, topics.Count, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), ct);
+
             var journal = await _lead.AssembleJournalAsync(job.Theme, papers, ct);
 
             var costSummary = _tokenTracker.GetSummary();
@@ -189,12 +219,19 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
             };
             await _jobStore.SaveAsync(job, ct);
 
+            await _notifier.NotifyAsync(new JobProgressEvent(
+                jobId, JobStatus.Completed, "Research complete",
+                completedCount, topics.Count, costSummary, DateTimeOffset.UtcNow), ct);
+
             LogJobCompleted(_logger, jobId, (job.CompletedAt!.Value - job.CreatedAt).TotalSeconds);
         }
         catch (OperationCanceledException)
         {
             LogJobCancelled(_logger, jobId);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Failed, CancellationToken.None);
+            await _notifier.NotifyAsync(new JobProgressEvent(
+                jobId, JobStatus.Failed, "Job cancelled",
+                0, 0, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), CancellationToken.None);
             throw;
         }
         catch (Exception ex)
@@ -202,6 +239,9 @@ public partial class ResearchOrchestrator : IResearchOrchestrator
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             LogJobFailed(_logger, ex, jobId);
             await _jobStore.UpdateStatusAsync(jobId, JobStatus.Failed, CancellationToken.None);
+            await _notifier.NotifyAsync(new JobProgressEvent(
+                jobId, JobStatus.Failed, ex.Message,
+                0, 0, _tokenTracker.GetSummary(), DateTimeOffset.UtcNow), CancellationToken.None);
             throw;
         }
     }
