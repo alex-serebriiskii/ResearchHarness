@@ -49,7 +49,7 @@ public partial class InstituteLeadAgent : IInstituteLeadAgent
         var response = await _llm.CompleteAsync<TopicDecompositionOutput>(request, ct);
         LogThemeDecomposed(_logger, response.Content.Topics?.Count ?? 0);
 
-        return (response.Content.Topics ?? [])
+        var topics = (response.Content.Topics ?? [])
             .Take(topicsToRequest)
             .Select(t => new ResearchTopic(
                 TopicId: Guid.NewGuid(),
@@ -60,6 +60,11 @@ public partial class InstituteLeadAgent : IInstituteLeadAgent
                 Status: TopicStatus.Pending,
                 Paper: null))
             .ToList();
+
+        foreach (var topic in topics)
+            LogTopicTitle(_logger, topic.Title);
+
+        return topics;
     }
 
     public async Task<Journal> AssembleJournalAsync(
@@ -99,4 +104,7 @@ public partial class InstituteLeadAgent : IInstituteLeadAgent
 
     [LoggerMessage(2001, LogLevel.Information, "Lead decomposed theme into {Count} topics")]
     private static partial void LogThemeDecomposed(ILogger logger, int count);
+
+    [LoggerMessage(2009, LogLevel.Information, "Lead decomposed topic: {TopicTitle}")]
+    private static partial void LogTopicTitle(ILogger logger, string topicTitle);
 }

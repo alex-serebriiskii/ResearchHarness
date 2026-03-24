@@ -41,6 +41,8 @@ public partial class PeerReviewService : IPeerReviewService
             RunSingleReviewAsync(paper, topic, config, ct));
 
         var results = await Task.WhenAll(reviewTasks);
+        foreach (var result in results)
+            LogReviewVerdict(_logger, result.Verdict.ToString(), topic.TopicId);
         return [.. results];
     }
 
@@ -81,4 +83,7 @@ public partial class PeerReviewService : IPeerReviewService
 
     [LoggerMessage(2004, LogLevel.Information, "Peer reviewing paper for topic {TopicId} with {ReviewerCount} reviewer(s)")]
     private static partial void LogReviewStarted(ILogger logger, Guid topicId, int reviewerCount);
+
+    [LoggerMessage(2010, LogLevel.Information, "Peer review verdict: {Verdict} for topic {TopicId}")]
+    private static partial void LogReviewVerdict(ILogger logger, string verdict, Guid topicId);
 }

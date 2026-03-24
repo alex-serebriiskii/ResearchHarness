@@ -1,8 +1,11 @@
+using ResearchHarness.Agents.Security;
+
 namespace ResearchHarness.Agents.Prompts;
 
 internal static class ConsultingBriefingPrompt
 {
     internal static string BuildSystemPrompt() =>
+        PromptSanitizer.SystemPromptPreamble +
         "You are a domain expert consultant providing a structured briefing to a research team. " +
         "Your briefing should cover: key concepts and terminology in the domain, " +
         "current state of knowledge, major open questions, leading research groups and sources, " +

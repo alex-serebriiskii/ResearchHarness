@@ -1,12 +1,14 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using ResearchHarness.Core.Models;
+using ResearchHarness.Agents.Security;
 
 namespace ResearchHarness.Agents.Prompts;
 
 internal static class ReviewEvaluationPrompt
 {
     internal static string BuildSystemPrompt() =>
+        PromptSanitizer.SystemPromptPreamble +
         "You are a rigorous peer reviewer evaluating a research paper. " +
         "Assess the paper on: factual consistency (do findings match sources?), " +
         "source quality (are sources credible?), completeness (does it address the topic scope?), " +
@@ -20,16 +22,18 @@ internal static class ReviewEvaluationPrompt
         sb.AppendLine($"Research Topic: {topic.Title}");
         sb.AppendLine($"Scope: {topic.Scope}");
         sb.AppendLine();
-        sb.AppendLine($"Executive Summary: {paper.ExecutiveSummary}");
+        sb.AppendLine(PromptSanitizer.WrapUntrustedContent("paper-content", PromptSanitizer.SanitizeExternalText($"Executive Summary: {paper.ExecutiveSummary}")));
         sb.AppendLine($"Confidence Score: {paper.ConfidenceScore:F2}");
         sb.AppendLine($"Number of Findings: {paper.Findings.Count}");
         sb.AppendLine($"Number of Sources: {paper.Bibliography.Count}");
         if (paper.Findings.Count > 0)
         {
             sb.AppendLine();
-            sb.AppendLine("Key Findings:");
+            var findingsSb = new StringBuilder();
+            findingsSb.AppendLine("Key Findings:");
             foreach (var f in paper.Findings.Take(5))
-                sb.AppendLine($"  - [{f.SubTopic}] {f.Summary}");
+                findingsSb.AppendLine($"  - [{f.SubTopic}] {f.Summary}");
+            sb.AppendLine(PromptSanitizer.WrapUntrustedContent("paper-findings", PromptSanitizer.SanitizeExternalText(findingsSb.ToString())));
         }
         return sb.ToString();
     }

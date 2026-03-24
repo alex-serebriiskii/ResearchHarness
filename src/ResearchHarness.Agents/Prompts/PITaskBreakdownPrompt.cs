@@ -1,11 +1,13 @@
 using System.Text.Json.Nodes;
 using ResearchHarness.Core.Models;
+using ResearchHarness.Agents.Security;
 
 namespace ResearchHarness.Agents.Prompts;
 
 public static class PITaskBreakdownPrompt
 {
     public static string BuildSystemPrompt() =>
+        PromptSanitizer.SystemPromptPreamble +
         "You are a Principal Investigator at a research institute. Given a research topic, you create a precise set of search tasks for lab agents to execute. Each task must have a specific, searchable query, target source types, clear extraction instructions, and relevance criteria. Prioritize specificity — vague queries produce poor results.";
 
     public static string BuildUserMessage(ResearchTopic topic, int maxTasks) =>

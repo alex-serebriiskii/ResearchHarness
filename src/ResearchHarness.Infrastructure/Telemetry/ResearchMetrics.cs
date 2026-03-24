@@ -19,6 +19,9 @@ public sealed class ResearchMetrics
     private readonly Counter<long> _llmTokensOutput;
     private readonly Counter<long> _searchCacheHits;
     private readonly Counter<long> _searchCacheMisses;
+    private readonly Counter<long> _searchQueries;
+    private readonly Counter<long> _pagesFetched;
+    private readonly Counter<long> _pagesFailed;
 
     public ResearchMetrics(IMeterFactory meterFactory)
     {
@@ -32,6 +35,9 @@ public sealed class ResearchMetrics
         _llmTokensOutput = meter.CreateCounter<long>("research.llm.tokens.output", "tokens", "Total LLM output tokens generated");
         _searchCacheHits = meter.CreateCounter<long>("research.search.cache.hits", "hits", "Search cache hits");
         _searchCacheMisses = meter.CreateCounter<long>("research.search.cache.misses", "misses", "Search cache misses");
+        _searchQueries = meter.CreateCounter<long>("research.search.queries", "queries", "Total search queries executed");
+        _pagesFetched = meter.CreateCounter<long>("research.search.pages.fetched", "pages", "Total pages fetched successfully");
+        _pagesFailed = meter.CreateCounter<long>("research.search.pages.failed", "pages", "Total page fetch failures");
     }
 
     public void RecordJobStarted() => _jobsStarted.Add(1);
@@ -49,4 +55,7 @@ public sealed class ResearchMetrics
     }
     public void RecordSearchCacheHit() => _searchCacheHits.Add(1);
     public void RecordSearchCacheMiss() => _searchCacheMisses.Add(1);
+    public void RecordSearchQuery() => _searchQueries.Add(1);
+    public void RecordPageFetched() => _pagesFetched.Add(1);
+    public void RecordPageFailed() => _pagesFailed.Add(1);
 }

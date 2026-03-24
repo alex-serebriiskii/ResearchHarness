@@ -1,3 +1,4 @@
+using ResearchHarness.Agents.Security;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Agents.Internal;
@@ -104,6 +105,8 @@ public partial class LabAgentService : ILabAgentServiceInternal
             if (string.IsNullOrWhiteSpace(s.Url))
                 continue; // Cannot register a source without a URL
             var url = s.Url!;
+            if (!PromptSanitizer.IsAllowedUrl(url))
+                continue; // Reject non-http(s) URLs
             var id = Guid.NewGuid();
             var cred = Enum.TryParse<SourceCredibility>(s.Credibility, out var parsed)
                 ? parsed
@@ -121,16 +124,31 @@ public partial class LabAgentService : ILabAgentServiceInternal
                 // Null/empty URL or URL not in sources list — create a fallback entry
                 sourceId = Guid.NewGuid();
                 var fallbackUrl = string.IsNullOrWhiteSpace(sourceUrl) ? $"unknown:{sourceId}" : sourceUrl!;
+                // Validate non-synthetic fallback URLs
+                if (!fallbackUrl.StartsWith("unknown:") && !PromptSanitizer.IsAllowedUrl(fallbackUrl))
+                    fallbackUrl = $"unknown:{sourceId}";
                 var fallback = new Source(
                     sourceId, fallbackUrl, fallbackUrl,
                     null, null, SourceCredibility.Unknown, "Not assessed");
                 sourceById[sourceId] = fallback;
-                if (!string.IsNullOrWhiteSpace(sourceUrl))
+                if (!string.IsNullOrWhiteSpace(sourceUrl) && fallbackUrl == sourceUrl)
                     sourceByUrl[sourceUrl!] = sourceId;
             }
 
             return new Finding(f.SubTopic ?? "", f.Summary ?? "", f.KeyPoints ?? [], [sourceId], f.RelevanceScore);
         }).ToList();
+
+        // Cross-reference: warn about findings citing URLs not in original search results
+        var knownUrls = new HashSet<string>(
+            searchResults.Hits.Select(h => h.Url),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var source in sourceById.Values)
+        {
+            if (!knownUrls.Contains(source.Url) && !source.Url.StartsWith("unknown:"))
+                LogUnknownSourceUrl(_logger, source.Url, task.Query);
+        }
+
+        LogExtractionResults(_logger, findings.Count, sourceById.Count, task.Query);
 
         return new LabTaskResult(findings, [.. sourceById.Values]);
         }
@@ -138,4 +156,10 @@ public partial class LabAgentService : ILabAgentServiceInternal
 
     [LoggerMessage(2003, LogLevel.Debug, "Lab got {Count} hits for query: {Query}")]
     private static partial void LogSearchHits(ILogger logger, int count, string query);
+
+    [LoggerMessage(2006, LogLevel.Warning, "Extracted source URL {Url} not found in search results for query: {Query}")]
+    private static partial void LogUnknownSourceUrl(ILogger logger, string url, string query);
+
+    [LoggerMessage(2007, LogLevel.Information, "Lab extracted {FindingCount} findings and {SourceCount} sources for query: {Query}")]
+    private static partial void LogExtractionResults(ILogger logger, int findingCount, int sourceCount, string query);
 }

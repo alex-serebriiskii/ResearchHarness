@@ -1,11 +1,13 @@
 using System.Text;
 using System.Text.Json.Nodes;
+using ResearchHarness.Agents.Security;
 
 namespace ResearchHarness.Agents.Prompts;
 
 public static class LeadDecompositionPrompt
 {
     public static string BuildSystemPrompt() =>
+        PromptSanitizer.SystemPromptPreamble +
         "You are the Institute Lead of a research institute. Your role is to decompose a research theme into discrete, well-scoped research topics that can be investigated independently. Each topic must have clear boundaries, specific search angles, and expected source types. Be precise and academically rigorous.";
 
     public static string BuildUserMessage(string theme, int maxTopics, string? domainContext = null)
@@ -19,7 +21,7 @@ public static class LeadDecompositionPrompt
         {
             sb.AppendLine();
             sb.AppendLine("Domain Expert Briefing:");
-            sb.AppendLine(domainContext);
+            sb.AppendLine(PromptSanitizer.WrapUntrustedContent("domain-briefing", PromptSanitizer.SanitizeExternalText(domainContext)));
         }
 
         sb.AppendLine();

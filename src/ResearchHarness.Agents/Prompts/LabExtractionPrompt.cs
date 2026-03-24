@@ -1,12 +1,14 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using ResearchHarness.Core.Models;
+using ResearchHarness.Agents.Security;
 
 namespace ResearchHarness.Agents.Prompts;
 
 public static class LabExtractionPrompt
 {
     public static string BuildSystemPrompt() =>
+        PromptSanitizer.SystemPromptPreamble +
         "You are a lab research agent. You receive search results and extract structured findings. Do not synthesize or interpret — extract factual information, note sources, and assess credibility objectively. Rate credibility as High (established institutions, peer-reviewed, official), Medium (reputable news, industry reports), Low (blogs, forums, anonymous), or Unknown.";
 
     public static string BuildUserMessage(SearchTask task, IEnumerable<SearchHit> hits, IEnumerable<PageContent> pages)
@@ -21,9 +23,12 @@ public static class LabExtractionPrompt
         int i = 1;
         foreach (var hit in hits.Take(10))
         {
-            sb.AppendLine($"Source {i}: {hit.Title}");
-            sb.AppendLine($"URL: {hit.Url}");
-            sb.AppendLine($"Snippet: {hit.Snippet}");
+            var title = PromptSanitizer.SanitizeExternalText(
+                PromptSanitizer.Truncate(hit.Title, PromptSanitizer.MaxTitleLength));
+            var snippet = PromptSanitizer.SanitizeExternalText(
+                PromptSanitizer.Truncate(hit.Snippet, PromptSanitizer.MaxSnippetLength));
+            var hitBlock = $"Source {i}:\nTitle: {title}\nURL: {hit.Url}\nSnippet: {snippet}";
+            sb.AppendLine(PromptSanitizer.WrapUntrustedContent("search-hit", hitBlock));
             sb.AppendLine();
             i++;
         }
@@ -35,11 +40,15 @@ public static class LabExtractionPrompt
             sb.AppendLine();
             foreach (var page in pageList)
             {
-                sb.AppendLine($"URL: {page.Url}");
-                if (page.Title is not null)
-                    sb.AppendLine($"Title: {page.Title}");
+                var pageTitle = page.Title is not null
+                    ? PromptSanitizer.SanitizeExternalText(page.Title)
+                    : null;
                 var text = page.RawText.Length > 2000 ? page.RawText[..2000] : page.RawText;
-                sb.AppendLine(text);
+                text = PromptSanitizer.SanitizeExternalText(text);
+                var pageBlock = pageTitle is not null
+                    ? $"URL: {page.Url}\nTitle: {pageTitle}\n{text}"
+                    : $"URL: {page.Url}\n{text}";
+                sb.AppendLine(PromptSanitizer.WrapUntrustedContent("page-content", pageBlock));
                 sb.AppendLine();
             }
         }

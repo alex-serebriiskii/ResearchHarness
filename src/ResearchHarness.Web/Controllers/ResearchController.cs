@@ -36,6 +36,9 @@ public sealed class ResearchController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Theme))
             return BadRequest("Theme must not be empty.");
 
+        if (request.Theme.Length > 2000)
+            return BadRequest("Theme must not exceed 2000 characters.");
+
         var jobId = await _orchestrator.StartResearchAsync(request.Theme, ct);
         return Ok(jobId);
     }

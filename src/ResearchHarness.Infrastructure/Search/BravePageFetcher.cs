@@ -3,27 +3,32 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ResearchHarness.Core.Interfaces;
 using ResearchHarness.Core.Models;
+using ResearchHarness.Infrastructure.Telemetry;
 
 namespace ResearchHarness.Infrastructure.Search;
 
-public sealed class BravePageFetcher : IPageFetcher
+public sealed partial class BravePageFetcher : IPageFetcher
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly BraveSearchOptions _options;
+    private readonly ResearchMetrics _metrics;
     private readonly ILogger<BravePageFetcher> _logger;
 
     public BravePageFetcher(
         IHttpClientFactory httpClientFactory,
         IOptions<BraveSearchOptions> options,
+        ResearchMetrics metrics,
         ILogger<BravePageFetcher> logger)
     {
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
+        _metrics = metrics;
         _logger = logger;
     }
 
     public async Task<PageContent> FetchAsync(string url, CancellationToken ct = default)
     {
+        LogPageFetchAttempt(_logger, url);
         using var client = _httpClientFactory.CreateClient("BravePageFetcher");
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(_options.PageFetchTimeoutSeconds));
@@ -37,14 +42,18 @@ public sealed class BravePageFetcher : IPageFetcher
                 _logger.LogWarning(
                     "Page fetch returned {StatusCode} for {Url}",
                     response.StatusCode, url);
+                _metrics.RecordPageFailed();
                 return new PageContent(url, "", null, null);
             }
 
             html = await response.Content.ReadAsStringAsync(cts.Token);
+            LogPageFetchSuccess(_logger, url, html.Length);
+            _metrics.RecordPageFetched();
         }
         catch (Exception ex) when (ex is OperationCanceledException or TaskCanceledException or HttpRequestException)
         {
             _logger.LogWarning(ex, "Page fetch failed for {Url}", url);
+            _metrics.RecordPageFailed();
             return new PageContent(url, "", null, null);
         }
 
@@ -82,4 +91,10 @@ public sealed class BravePageFetcher : IPageFetcher
 
         return text.Length > 8000 ? text[..8000] : text;
     }
+
+    [LoggerMessage(4002, LogLevel.Information, "Fetching page: {Url}")]
+    private static partial void LogPageFetchAttempt(ILogger logger, string url);
+
+    [LoggerMessage(4003, LogLevel.Information, "Page fetched successfully: {Url} ({ContentLength} bytes)")]
+    private static partial void LogPageFetchSuccess(ILogger logger, string url, int contentLength);
 }

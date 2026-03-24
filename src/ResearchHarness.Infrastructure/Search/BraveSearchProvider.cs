@@ -10,7 +10,7 @@ using ResearchHarness.Infrastructure.Telemetry;
 
 namespace ResearchHarness.Infrastructure.Search;
 
-public sealed class BraveSearchProvider : ISearchProvider
+public sealed partial class BraveSearchProvider : ISearchProvider
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISearchResultCache _cache;
@@ -56,6 +56,8 @@ public sealed class BraveSearchProvider : ISearchProvider
         var results = await _rateLimiter.ExecuteSearchCallAsync(
             () => FetchFromApiAsync(query, options, ct), ct);
 
+        LogSearchQueryExecuted(_logger, query, results.Hits.Count);
+        _metrics.RecordSearchQuery();
         await _cache.SetAsync(query, results, ct);
         return results;
     }
@@ -96,4 +98,7 @@ public sealed class BraveSearchProvider : ISearchProvider
 
         return new SearchResults(hits, null);
     }
+
+    [LoggerMessage(4001, LogLevel.Information, "Search query executed: {Query} ({HitCount} hits)")]
+    private static partial void LogSearchQueryExecuted(ILogger logger, string query, int hitCount);
 }

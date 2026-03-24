@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using ResearchHarness.Agents.Internal;
 using ResearchHarness.Agents.Prompts;
+using ResearchHarness.Agents.Security;
 using ResearchHarness.Core;
 using ResearchHarness.Core.Interfaces;
 using ResearchHarness.Core.Llm;
@@ -65,6 +66,9 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
 
         LogSearchTasksCreated(_logger, searchTasks.Count, topic.TopicId);
 
+        foreach (var st in searchTasks)
+            LogSearchTaskQuery(_logger, st.Query, topic.TopicId);
+
         // Step 2: Execute search tasks concurrently under RateLimitedExecutor global semaphore
         var labResults = await Task.WhenAll(
             searchTasks.Select(st => _labAgent.ExecuteSearchTaskFullAsync(st, config, ct)));
@@ -81,7 +85,7 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         // Step 3: Synthesize findings into a paper
         var synthesisRequest = new LlmRequest(
             Model: config.PIModel,
-            SystemPrompt: "You are a Principal Investigator synthesizing research findings into a structured paper. Be precise, evidence-based, and academically rigorous. Format the executive summary using markdown: lead with a concise thesis, use bullet points for key findings, and **bold** for critical terms.",
+            SystemPrompt: PromptSanitizer.SystemPromptPreamble + "You are a Principal Investigator synthesizing research findings into a structured paper. Be precise, evidence-based, and academically rigorous. Format the executive summary using markdown: lead with a concise thesis, use bullet points for key findings, and **bold** for critical terms.",
             Messages: [LlmMessage.User(BuildSynthesisMessage(topic, allFindings, sourceMap.Values))],
             OutputSchema: BuildSynthesisSchema()
         );
@@ -116,7 +120,8 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         {
         var revisionRequest = new LlmRequest(
             Model: config.PIModel,
-            SystemPrompt: "You are a Principal Investigator revising a research paper based on peer reviewer feedback. " +
+            SystemPrompt: PromptSanitizer.SystemPromptPreamble +
+                          "You are a Principal Investigator revising a research paper based on peer reviewer feedback. " +
                           "Improve the paper while maintaining factual accuracy and evidence-based conclusions. Maintain markdown formatting in the revised executive summary.",
             Messages: [LlmMessage.User(BuildRevisionMessage(topic, currentPaper, reviews))],
             OutputSchema: BuildSynthesisSchema()
@@ -144,20 +149,24 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         sb.AppendLine($"Scope: {topic.Scope}");
         sb.AppendLine();
 
-        sb.AppendLine("Findings:");
+        var findingsSb = new StringBuilder();
+        findingsSb.AppendLine("Findings:");
         int i = 1;
         foreach (var finding in findings)
         {
-            sb.AppendLine($"{i}. [{finding.SubTopic}] {finding.Summary} (Relevance: {finding.RelevanceScore:F2})");
+            findingsSb.AppendLine($"{i}. [{finding.SubTopic}] {finding.Summary} (Relevance: {finding.RelevanceScore:F2})");
             foreach (var kp in finding.KeyPoints)
-                sb.AppendLine($"   - {kp}");
+                findingsSb.AppendLine($"   - {kp}");
             i++;
         }
+        sb.AppendLine(PromptSanitizer.WrapUntrustedContent("research-findings", PromptSanitizer.SanitizeExternalText(findingsSb.ToString())));
 
         sb.AppendLine();
-        sb.AppendLine("Sources:");
+        var sourcesSb = new StringBuilder();
+        sourcesSb.AppendLine("Sources:");
         foreach (var source in sources)
-            sb.AppendLine($"- {source.Title} ({source.Url}) [{source.Credibility}]");
+            sourcesSb.AppendLine($"- {source.Title} ({source.Url}) [{source.Credibility}]");
+        sb.AppendLine(PromptSanitizer.WrapUntrustedContent("research-sources", PromptSanitizer.SanitizeExternalText(sourcesSb.ToString())));
 
         sb.AppendLine();
         sb.Append("Synthesize the above into: " +
@@ -177,17 +186,18 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
         sb.AppendLine($"Research Topic: {topic.Title}");
         sb.AppendLine($"Scope: {topic.Scope}");
         sb.AppendLine();
-        sb.AppendLine("Current Executive Summary:");
-        sb.AppendLine(currentPaper.ExecutiveSummary);
+        sb.AppendLine(PromptSanitizer.WrapUntrustedContent("paper-content", PromptSanitizer.SanitizeExternalText($"Current Executive Summary:\n{currentPaper.ExecutiveSummary}")));
         sb.AppendLine();
-        sb.AppendLine("Peer Reviewer Feedback:");
+        var reviewSb = new StringBuilder();
+        reviewSb.AppendLine("Peer Reviewer Feedback:");
         int ri = 1;
         foreach (var review in reviews)
         {
-            sb.AppendLine($"Reviewer {ri++}: {review.Verdict} \u2014 {review.Feedback}");
+            reviewSb.AppendLine($"Reviewer {ri++}: {review.Verdict} \u2014 {review.Feedback}");
             foreach (var issue in review.Issues)
-                sb.AppendLine($"  - {issue}");
+                reviewSb.AppendLine($"  - {issue}");
         }
+        sb.AppendLine(PromptSanitizer.WrapUntrustedContent("review-feedback", PromptSanitizer.SanitizeExternalText(reviewSb.ToString())));
         sb.AppendLine();
         sb.AppendLine("Findings:");
         int i = 1;
@@ -221,4 +231,7 @@ public partial class PrincipalInvestigatorAgent : IPrincipalInvestigatorAgent
 
     [LoggerMessage(2002, LogLevel.Information, "PI created {Count} search tasks for topic {TopicId}")]
     private static partial void LogSearchTasksCreated(ILogger logger, int count, Guid topicId);
+
+    [LoggerMessage(2008, LogLevel.Debug, "PI generated search query: {Query} for topic {TopicId}")]
+    private static partial void LogSearchTaskQuery(ILogger logger, string query, Guid topicId);
 }
