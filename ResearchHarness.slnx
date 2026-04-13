@@ -5,6 +5,8 @@
     <Project Path="src/ResearchHarness.Infrastructure/ResearchHarness.Infrastructure.csproj" />
     <Project Path="src/ResearchHarness.Orchestration/ResearchHarness.Orchestration.csproj" />
     <Project Path="src/ResearchHarness.Web/ResearchHarness.Web.csproj" />
+    <Project Path="src/ResearchHarness.Client/ResearchHarness.Client.csproj" />
+    <Project Path="src/ResearchHarness.Cli/ResearchHarness.Cli.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ResearchHarness.Tests.Integration/ResearchHarness.Tests.Integration.csproj" />
